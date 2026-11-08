@@ -92,6 +92,7 @@ duplicated block is recoverable; a silently deleted section is a missing partiti
 Comment-only or not, the test is the same and it is cheap:
 
 ```sh
+REPO=$(pwd)        # run this from the top of this repository: the patch paths below are relative
 TREE=/path/to/los24
 sh apply-all.sh "$TREE"                                  # the scripts produce the tree
 git -C "$TREE/device/xiaomi/elish" diff > /tmp/by-scripts.diff
@@ -106,8 +107,10 @@ diff /tmp/by-scripts.diff /tmp/by-patch.diff             # must differ only in m
 ```
 
 Script state and patch state must agree byte for byte except for material (`ksu/bin/ksud` and
-anything else `MAT_SKIP` covers). That comparison is the reason the published patches can be
-trusted without re-deriving them.
+anything else `MAT_SKIP` covers). Material is what the scripts place from outside the tree: by
+default it is read from `../material` relative to this directory, which `KSU_MATERIAL_DIR`
+overrides. That comparison is the reason the published patches can be trusted without
+re-deriving them.
 
 ## Form switch
 

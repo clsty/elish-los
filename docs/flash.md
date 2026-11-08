@@ -1,0 +1,188 @@
+# Flashing
+
+Commands, not scripts: flashing and acceptance are deliberately bare `adb` / `fastboot`
+invocations, so that every step is readable and each one can be re-run on its own. The only
+script in this project's build path is the build entry point; there is no flashing script to
+maintain, and a flashing mistake you can see is worth more than a script that hides it.
+
+Two routes:
+
+| | Route A: rebuild from the stock firmware | Route B: re-flash this ROM |
+| --- | --- | --- |
+| When | starting from HyperOS, or after a bad partition layout | every normal iteration |
+| Data | **wiped** (the firmware package re-partitions) | kept |
+| Parts | firmware partitions, `boot`, `vendor_boot`, ROM, GApps | ROM (+ GApps), and `boot`/`vendor_boot` only if the kernel changed |
+
+## 0. Three confirmations, every time
+
+```sh
+adb devices                                    # exactly one device
+adb shell getprop ro.product.device            # elish - this guards against flashing to the wrong tablet
+adb shell getprop ro.boot.slot_suffix          # the booting slot; this is the only slot truth
+```
+
+`fastboot getvar current-slot` is **not** a slot truth on this device: its ABL has been
+observed to answer `a` consistently in both the stock firmware and after flashing, and once
+`b`. Use it only to decide "is it in fastboot at all". To decide *which ROM is running*, read
+three things and cross-check: `ro.system.build.fingerprint` (not `ro.build.fingerprint`, which
+the vendor side overwrites), `ro.lineage.version`, and `uname -r`.
+
+## 1. Fastboot and recovery: seven rules, each paid for
+
+1. Without udev rules, `fastboot` fails with a permission error - re-run the same command with
+   `sudo`.
+2. The first few commands after connecting often go unanswered (`getvar` returning
+   `FAILED (remote: 'unknown command')`, or a timeout). That is the device's fastboot
+   connection, not the command. Resend as-is; the second attempt usually answers. Do not read
+   `GetVar Variable Not found` as "device not found".
+3. If the device wedges - `fastboot devices` lists it but nothing answers `getvar`, `flash` or
+   `reboot`, and a USB reset does not help - the only recovery is a power-key hold to force a
+   restart into fastboot (which restarts the ABL). Re-flashing a partition that already
+   succeeded is harmless, so resume the same command afterwards.
+4. Flash with the slot-suffixed partition name (`boot_a`); fall back to the bare name only if
+   that fails. `erase boot_ab` was measured to return `Check device console.`, and `_ab`
+   operations have a hang on record.
+5. Progress is redrawn with `\r`, so piping to `tail` shows nothing - that is not a hang. And
+   **do not give a long flash a short timeout**: a host-side timeout interrupting the transfer
+   is what triggers rule 3. Scale the timeout with the image.
+6. Enter fastboot with the hardware keys (hold power ~15 s until power cuts, then
+   power + volume-down). `adb reboot bootloader` has been measured to hang for five minutes and
+   panic back into the system on the stock-kernel path. Distinguish `fastbootd` from bootloader
+   fastboot with `fastboot getvar is-userspace`: `yes` means fastbootd, and the firmware and
+   `boot` images want `no`.
+7. In recovery, check state with a single `adb devices`: it must say **`sideload`** before you
+   push. While it says only `recovery`, `adb sideload` is a `connection failed: closed` no-op.
+   `adb reboot sideload` switches it from the host, so you need not touch the screen. And
+   `adb wait-for-device` **does not return** in sideload state - it waits for `device`, which
+   sideload never reports - so use it never, and `adb devices` once.
+
+## 2. Route A: from the stock firmware (wipes everything)
+
+1. Flash the `HyperOS 1.0.2.0.TKYCNXM` fastboot package (CN firmware line). This re-partitions
+   and clears all data and cannot be undone by flashing a ROM. Unpack the `.tgz` first; the
+   directory it contains is what the next step needs, and `flash_all.sh` inside it must be run
+   from that directory because its image paths are relative to it.
+
+   Run the package's own list rather than `flash_all.sh` itself, for two measured reasons: it
+   checks the product with `getvar` exactly once, and this ABL often does not answer the first
+   command (rule 2), so the script exits by itself with `Missmatching image and device`; and it
+   has no retry at all, while an occasional unanswered command is normal here. Transforming the
+   list changes three things only - the script's own directory, the `getvar` self-check, and
+   `_ab` → the current slot - and drops four partitions that exist for Xiaomi's own bookkeeping
+   (`crclist`, `sparsecrclist`, `rescue`, `imagefv`):
+
+   ```sh
+   d=/path/to/elish_images_OS1.0.2.0.TKYCNXM_13.0/   # the unpacked package, note the trailing slash
+   slot=$(fastboot getvar current-slot 2>&1 | sed -n 's/^current-slot: //p')
+   [ -n "$slot" ] || slot=$(fastboot getvar current-slot 2>&1 | sed -n 's/^current-slot: //p')
+   sed -e 's|^fastboot \$\* |fastboot |' -e 's|`dirname \$0`|'"$d"'|g' \
+       -e 's|^fastboot set_active |fastboot --set-active=|' \
+       -e '/^fastboot /!d' -e '/getvar/d' -e '/^fastboot reboot$/d' \
+       -e 's/_ab\b/_'"$slot"'/g' "$d/flash_all.sh" \
+     | grep -vE "flash (crclist|sparsecrclist|rescue|imagefv_$slot) |erase imagefv_$slot" \
+     > sta.sh
+   sh sta.sh 2>&1 | tee sta.log
+   grep -iE "FAILED|not found|error|missmatch" sta.log          # anything here needs the next line
+   ```
+
+   Then re-run only the lines that failed. Resending a partition that already succeeded is
+   harmless (rule 3), which is what makes this loop safe to leave running:
+
+   ```sh
+   grep -B1 "FAILED (remote)" sta.log | grep '^fastboot flash' | sed 's/^fastboot flash //' \
+     | sort -u > retry.txt          # check this list before trusting it
+   while read -r p f; do fastboot flash "$p" "$f" || echo "again: $p"; done < retry.txt
+   ```
+
+   A `not found` for `gpt_backup$slot` on a device that has never re-partitioned is not a
+   failure: that partition does not exist yet, and this very run creates it.
+
+2. Once LineageOS is installed, do **not** re-flash the firmware package's `dtbo` or
+   `vendor_dlkm`. They belong to the stock kernel, while the ROM's `boot` carries a different
+   one, and a mismatch is a device that does not boot. If you must, flash both slots and reboot
+   immediately.
+
+3. Do **not** boot into the stock system to "verify" it. The firmware package provides the
+   firmware and partition baseline and takes effect as soon as it is written. Keep it as a
+   fallback argument: if LineageOS fails to boot, booting the freshly-flashed firmware
+   successfully is what proves the problem is on the ROM side.
+4. Reboot to recovery, `Wipe → Format data/factory reset` (type yes), `Advanced → Enable ADB`,
+   `Apply update → Apply from ADB`, sideload the ROM, then **in the same session** sideload
+   GApps - the only hard condition is not to boot the system before GApps are in - then
+   `Reboot system now`.
+
+## 3. Route B: re-flash this ROM (keeps data)
+
+**Take the zip by today's date, not by mtime.** `mka bacon` writes the same inode under
+`lineage-24.0-<old date>`, `<new date>` and `lineage_elish-ota.zip`; picking by timestamp can
+select the stale name (same content, misleading record). Record three hashes - ROM zip,
+`boot.img`, `vendor_boot.img` - as "the artifact was not truncated or replaced" evidence for
+the next round. `boot.img`'s hash changes every build from build noise alone, so it is not a
+criterion; if the kernel did not change, `boot` and `vendor_boot` are not re-flashed at all.
+
+**Decide about wiping `/data` from the `framework-res.apk` signing fingerprint**, read on both
+sides at runtime (device and the new build's `out/`). Same fingerprint → same key → no format.
+Different → every LOS system app changes signature → format is required. Both sides here use
+the AOSP test key, so routine iterations do not wipe.
+
+**Remove data-side test installs** of anything you are about to test (`pm path` prefers
+`/data/app`, so a leftover install means you are not testing the image's copy):
+
+```sh
+MANAGER_PKG=com.example.manager            # the package name of the manager you installed
+for pkg in "$MANAGER_PKG" org.lineageos.aperture; do
+  adb shell pm path "$pkg" | grep -q /data/app/ && adb uninstall "$pkg"
+done
+```
+
+Two host paths are used below and are not the same thing: `$OUT` is the build's output
+directory (`out/target/product/elish` under the tree), `$ZIP` is the dated ROM zip taken as
+above. Both must be absolute.
+
+```sh
+OUT=/path/to/los24/out/target/product/elish
+ZIP=$OUT/lineage-24.0-20260101-UNOFFICIAL-elish.zip      # the dated name, not lineage_elish-ota.zip
+```
+
+**Flash `boot` and `vendor_boot` into *both* slots - and only when the kernel changed.** The
+reason is measured rather than theoretical: `boot` was once flashed into `_a`, and the device
+then booted `_b`, because a ROM sideload writes its own target slot. Giving both slots the same
+`boot` removes the guesswork.
+
+```sh
+adb reboot bootloader; sleep 8
+for s in a b; do fastboot flash boot_$s "$OUT/boot.img"; fastboot flash vendor_boot_$s "$OUT/vendor_boot.img"; done
+fastboot reboot recovery
+```
+
+**Sideload the ROM**, then **re-push GApps**:
+
+```sh
+adb reboot recovery
+adb devices                  # must say sideload (rule 7); adb reboot sideload if not
+adb sideload "$ZIP"          # absolute path: adb stats it on the host, a relative path is an rc=1 no-op
+adb reboot recovery; adb devices
+adb sideload MindTheGapps-17.0.0-arm64-*.zip
+```
+
+`failed to read command: Success` at the end of a sideload is normal. When the transfer
+completes, adbd restarts and `adb devices` shows `unauthorized`; `adb kill-server && adb
+start-server` fixes it without touching the screen.
+
+GApps are **not optional after a ROM-only flash**: the ROM payload is a full `super` image, and
+MindTheGapps installs into `system/`, which the payload rewrites wholesale. One moment needs a
+human at the device: when the GApps transfer finishes, the Google apps licence page appears and
+`Accept` must be pressed (wake the screen with a short power-key press if it went dark). That is
+the only point in the whole flow where someone has to be next to the tablet. Then
+`Reboot system now`.
+
+## 4. Two regularities this device obeys
+
+1. **A ROM-only sideload lands on the other slot.** Four consecutive observations of `_b`→`_a`→
+   `_b`→`_a`→`_b`. The practical consequence is that a slot you assumed is not the booted one;
+   read `ro.boot.slot_suffix` after booting (it is the truth) rather than inferring.
+2. **After a ROM-only re-flash, GApps must be pushed again** (see above). Forgetting this is
+   the most common cause of a "GApps disappeared" report that is not a regression.
+
+A third, smaller one: `adb root` does not survive a reboot. Re-issue it after every boot
+before anything that needs a root shell.
