@@ -1,0 +1,19 @@
+# The built-in-kernel flow wants ksud at /data/adb/ksud: that is the path the
+# kernel appends to init.rc itself (KernelSU kernel/runtime/ksud_integration.c
+# execs "u:r:ksu:s0 root -- /data/adb/ksud post-fs-data"), so on a fresh /data
+# the file is simply missing and none of the three stages ever runs.
+#
+# Opening a manager performs this install by itself (measured: "install result:
+# true"). Doing it here means root is live after a flash without launching a
+# manager first - which is what lets this ROM ship ksud without shipping a
+# manager: the manager is the user's choice (official release, or a build with a
+# package name of their own), while the delivery of ksud stays ours.
+#
+# /product/bin/ksud is the same binary the manager APK carries under
+# lib/arm64-v8a/libksud.so (apply-root-changes.sh extracts it and pins its
+# sha256), so userspace and any matching manager are the same release. The domain
+# matches the kernel's own exec, and the file type is system_file - the same type
+# as the app JNI directory this line used to point at, so no sepolicy is added.
+# install only writes /data/adb - measured: no avc denial.
+on property:sys.boot_completed=1
+    exec u:r:ksu:s0 root root -- /product/bin/ksud install

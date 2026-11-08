@@ -1,0 +1,288 @@
+diff --git a/BoardConfig.mk b/BoardConfig.mk
+index 28fbf7f..3c57af6 100644
+--- a/BoardConfig.mk
++++ b/BoardConfig.mk
+@@ -17,6 +17,9 @@ TARGET_SCREEN_DENSITY := 360
+ 
+ # Kernel
+ TARGET_KERNEL_CONFIG += vendor/xiaomi/elish.config
++# ReSukiSU + SuSFS: root lives in the ROM itself, not in a separately flashed
++# boot image. This fragment must come last, or an earlier fragment overrides its symbols.
++TARGET_KERNEL_CONFIG += vendor/xiaomi/ksu-susfs.config
+ 
+ # OTA assert
+ TARGET_OTA_ASSERT_DEVICE := elish
+@@ -27,6 +30,18 @@ TARGET_VENDOR_PROP += $(DEVICE_PATH)/vendor.prop
+ # Recovery
+ $(call soong_config_set_bool,recovery,target_recovery_uses_qti_drm,true)
+ 
++# --- root: managed by lineageos/patches/apply-root-changes.sh ---
++# The manager execs ksud; the image's file modes come from fs_config, not from the
++# staging directory (measured: 0755 in out/, 0644 on device), so the delivered ksud
++# needs an explicit 0755 there. Why the entries are what they are: config.fs.
++TARGET_FS_CONFIG_GEN += $(DEVICE_PATH)/config.fs
++
++# ksud and the JNI libraries are ELF files shipped through PRODUCT_COPY_FILES, because
++# their destinations are not somewhere a cc_prebuilt_* module can install to. That
++# trips the ELF-in-COPY_FILES hint; this is the opt-out it lacks.
++BUILD_BROKEN_ELF_PREBUILT_PRODUCT_COPY_FILES := true
++# --- end root ---
++
+ # Sepolicy
+ SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += $(DEVICE_PATH)/sepolicy/private
+ SYSTEM_EXT_PUBLIC_SEPOLICY_DIRS += $(DEVICE_PATH)/sepolicy/public
+diff --git a/appcompat/compat_framework_overrides.xml b/appcompat/compat_framework_overrides.xml
+new file mode 100644
+index 0000000..aaf9928
+--- /dev/null
++++ b/appcompat/compat_framework_overrides.xml
+@@ -0,0 +1,46 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++  Why this file exists, and why it is not an init.rc:
++
++  On a large screen (sw >= 600dp) Android 16 discards a fixed screenOrientation request twice
++  over. Target SDK 36 "universal resizability" downgrades it first (logcat: "Ignoring
++  manifest-declared fixed orientation ... since target sdk 36"), and whatever survives that is
++  then dropped by the display's ignoreOrientationRequest, which is on by default for large
++  screens. Aperture asks for a landscape window on such devices - its controls are a sidebar next
++  to the preview (packages/apps/Aperture: layout-w840dp-h600dp-land) - so both steps have to be
++  opted out of for the request to mean anything. The first one is opted out in the app's own
++  manifest (android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY). The second one cannot
++  be opted out from an app: it is change 236283604,
++  ActivityInfo.OVERRIDE_RESPECT_REQUESTED_ORIENTATION, whose stated purpose is to exclude the
++  packages it is applied to from that display behaviour, and only the device can apply it.
++
++  This file is that application. CompatConfig loads /product/etc/appcompat/
++  compat_framework_overrides.xml at the start of every boot (STATIC_OVERRIDES_PRODUCT_DIR,
++  before the copy under /data/misc/appcompat), so a value here is the device default and is
++  re-asserted after every flash rather than depending on something running at boot. Measured on
++  device with the /data copy deleted: the override is in place once boot completes, the framework
++  then writes it back into /data/misc/appcompat/compat_framework_overrides.xml itself, and there
++  is no avc denial. "am compat" still wins over this, because the /data file is loaded after it.
++
++  An earlier revision of this change ran "am compat enable 236283604 org.lineageos.aperture" from
++  an init.rc instead. It works only through a shell wrapper: init execs /system/bin/am in
++  u:r:shell:s0 and SELinux refuses the entrypoint, because am is a shebang script labelled
++  system_file while the shell domain may only be entered through a shell_exec file. Two moving
++  parts for something a file can say, so the rc is gone.
++
++  Format is the framework's own: this is the element CompatConfig writes to
++  /data/misc/appcompat/compat_framework_overrides.xml after "am compat enable", copied verbatim
++  (min/max version codes are the full range, i.e. every version of the app).
++-->
++<overrides>
++    <change-overrides changeId="236283604">
++        <validated>
++            <override-value packageName="org.lineageos.aperture" enabled="true">
++            </override-value>
++        </validated>
++        <raw>
++            <raw-override-value packageName="org.lineageos.aperture" minVersionCode="-9223372036854775808" maxVersionCode="9223372036854775807" enabled="true">
++            </raw-override-value>
++        </raw>
++    </change-overrides>
++</overrides>
+diff --git a/config.fs b/config.fs
+new file mode 100644
+index 0000000..50b97c3
+--- /dev/null
++++ b/config.fs
+@@ -0,0 +1,13 @@
++# Image file modes come from fs_config, not from the staging directory (measured:
++# the staged copy was 0755 while the device showed 0644). Its built-in table gives
++# 0755 to bin/*-like paths and 0644 to app directories.
++#
++# ksud is exec'd, not dlopen'd, and a file without an +x bit cannot be exec'd even
++# by root (measured), so the file that delivers ksud needs an explicit 0755.
++# The caps: 0 form follows device/xiaomi/sm8250-common/config.fs.
++[product/bin/ksud]
++mode: 0755
++user: AID_ROOT
++group: AID_SHELL
++caps: 0
++
+diff --git a/device.mk b/device.mk
+index 6053d44..3d43b61 100644
+--- a/device.mk
++++ b/device.mk
+@@ -22,6 +22,13 @@ PRODUCT_AAPT_PREBUILT_DPI := xxxhdpi xxhdpi xhdpi hdpi
+ PRODUCT_COPY_FILES += \
+     $(call find-copy-subdir-files,*,$(LOCAL_PATH)/audio/,$(TARGET_COPY_OUT_VENDOR)/etc)
+ 
++# Raw touch and pen coordinates stay in the panel electrical frame
++# (X 0..1599 / Y 0..2559) while the display is installed at 90 degrees, so
++# touch.orientation has to be declared - otherwise the input subsystem
++# stretches them onto the logical viewport (RawToDisplay turns into SCALE).
++PRODUCT_COPY_FILES += \
++    $(call find-copy-subdir-files,*,$(LOCAL_PATH)/idc/,$(TARGET_COPY_OUT_VENDOR)/usr/idc)
++
+ # Boot animation
+ TARGET_SCREEN_HEIGHT := 2560
+ TARGET_SCREEN_WIDTH := 1600
+@@ -59,6 +66,28 @@ $(call soong_config_set, xiaomi_elish_peripherals, stylus_use_old_driver, true)
+ PRODUCT_PACKAGES += \
+     init.elish.rc
+ 
++
++# Per-package compat override that keeps the camera app's landscape window request alive on this
++# large screen, which Android 16 would otherwise discard. Why it is needed at all:
++# appcompat/compat_framework_overrides.xml (CompatConfig's STATIC_OVERRIDES_PRODUCT_DIR).
++PRODUCT_COPY_FILES += \
++    $(call find-copy-subdir-files,*,$(LOCAL_PATH)/appcompat,$(TARGET_COPY_OUT_PRODUCT)/etc/appcompat)
++
++# --- root: managed by lineageos/patches/apply-root-changes.sh ---
++# The kernel side (ReSukiSU + SuSFS) is in kernel/xiaomi/sm8250, see
++# arch/arm64/configs/vendor/xiaomi/ksu-susfs.config. The ROM delivers the userspace
++# half too, so root needs nothing beyond this ROM - but it delivers only ksud. The
++# manager is left to the user on purpose: a package name used to hide root is a secret,
++# and shipping one in the image would publish it for everyone.
++PRODUCT_COPY_FILES += \
++    $(LOCAL_PATH)/ksu/bin/ksud:$(TARGET_COPY_OUT_PRODUCT)/bin/ksud
++
++# Seeds /data/adb/ksud, which is where the kernel's own appended init.rc execs ksud
++# from. Why it is needed at all: ksu/etc/init/ksu-install.rc.
++PRODUCT_COPY_FILES += \
++    $(call find-copy-subdir-files,*,$(LOCAL_PATH)/ksu/etc/init,$(TARGET_COPY_OUT_PRODUCT)/etc/init)
++# --- end root ---
++
+ # RRO Overlays
+ PRODUCT_PACKAGES += \
+     ApertureOverlayElish \
+diff --git a/idc/NVTCapacitivePen.idc b/idc/NVTCapacitivePen.idc
+new file mode 100644
+index 0000000..23f5945
+--- /dev/null
++++ b/idc/NVTCapacitivePen.idc
+@@ -0,0 +1,5 @@
++# The pen shares its source with the panel, so its raw coordinates are also in the panel
++# electrical frame, at 8 times the panel range (X 0..12799 / Y 0..20479). The same 90
++# degree declaration applies as for the touchscreen; scaling by range is handled by the
++# input subsystem.
++touch.orientation = ORIENTATION_90
+diff --git a/idc/NVTCapacitiveTouchScreen.idc b/idc/NVTCapacitiveTouchScreen.idc
+new file mode 100644
+index 0000000..ac38db3
+--- /dev/null
++++ b/idc/NVTCapacitiveTouchScreen.idc
+@@ -0,0 +1,7 @@
++# Raw touch coordinates stay in the panel electrical frame (portrait: X 0..1599 /
++# Y 0..2559) while the display is installed at 90 degrees, so the 90-degree difference
++# has to be declared. Otherwise the input subsystem stretches them onto the logical
++# viewport (RawToDisplay becomes SCALE) and touch is misaligned.
++# The key must be touch.orientation: a bare "orientation" is the keyboard's key and is
++# ignored on a touchscreen.
++touch.orientation = ORIENTATION_90
+diff --git a/ksu/etc/init/ksu-install.rc b/ksu/etc/init/ksu-install.rc
+new file mode 100644
+index 0000000..1b11046
+--- /dev/null
++++ b/ksu/etc/init/ksu-install.rc
+@@ -0,0 +1,19 @@
++# The built-in-kernel flow wants ksud at /data/adb/ksud: that is the path the
++# kernel appends to init.rc itself (KernelSU kernel/runtime/ksud_integration.c
++# execs "u:r:ksu:s0 root -- /data/adb/ksud post-fs-data"), so on a fresh /data
++# the file is simply missing and none of the three stages ever runs.
++#
++# Opening a manager performs this install by itself (measured: "install result:
++# true"). Doing it here means root is live after a flash without launching a
++# manager first - which is what lets this ROM ship ksud without shipping a
++# manager: the manager is the user's choice (official release, or a build with a
++# package name of their own), while the delivery of ksud stays ours.
++#
++# /product/bin/ksud is the same binary the manager APK carries under
++# lib/arm64-v8a/libksud.so (apply-root-changes.sh extracts it and pins its
++# sha256), so userspace and any matching manager are the same release. The domain
++# matches the kernel's own exec, and the file type is system_file - the same type
++# as the app JNI directory this line used to point at, so no sepolicy is added.
++# install only writes /data/adb - measured: no avc denial.
++on property:sys.boot_completed=1
++    exec u:r:ksu:s0 root root -- /product/bin/ksud install
+diff --git a/rro_overlays/FrameworkResOverlayElish/res/values-zh-rCN/config.xml b/rro_overlays/FrameworkResOverlayElish/res/values-zh-rCN/config.xml
+deleted file mode 100644
+index f3763d8..0000000
+--- a/rro_overlays/FrameworkResOverlayElish/res/values-zh-rCN/config.xml
++++ /dev/null
+@@ -1,24 +0,0 @@
+-<!--
+-   Copyright (C) 2018 The Android Open Source Project
+-  
+-   Licensed under the Apache License, Version 2.0 (the "License");
+-   you may not use this file except in compliance with the License.
+-   You may obtain a copy of the License at
+-  
+-        http://www.apache.org/licenses/LICENSE-2.0
+-  
+-   Unless required by applicable law or agreed to in writing, software
+-   distributed under the License is distributed on an "AS IS" BASIS,
+-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-   See the License for the specific language governing permissions and
+-   limitations under the License.
+-  -->
+-
+-<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+-    <!-- SNTP client config: NTP servers to use to obtain an accurate time.
+-         Items must be in the form: "ntp://<host>[:port]"
+-         This is not a registered IANA URI scheme. -->
+-    <string-array translatable="false" name="config_ntpServers">
+-        <item>ntp://ntp.aliyun.com</item>
+-    </string-array>
+-</resources>
+\ No newline at end of file
+diff --git a/rro_overlays/FrameworkResOverlayElish/res/values/config.xml b/rro_overlays/FrameworkResOverlayElish/res/values/config.xml
+index 8b6510f..3c50698 100644
+--- a/rro_overlays/FrameworkResOverlayElish/res/values/config.xml
++++ b/rro_overlays/FrameworkResOverlayElish/res/values/config.xml
+@@ -402,4 +402,14 @@
+          <item>xiaomi.sensor.back_lux</item>
+     </string-array>
+ 
++    <!-- SNTP client config: NTP servers to use to obtain an accurate time.
++         Items must be in the form: "ntp://<host>[:port]"
++         This is not a registered IANA URI scheme.
++         Upstream kept this only under values-zh-rCN/, so Aliyun NTP was used just
++         when the system language was Chinese. NtpTrustedTime reads exactly this
++         resource, so the condition becomes unconditional (value unchanged). -->
++    <string-array translatable="false" name="config_ntpServers">
++        <item>ntp://ntp.aliyun.com</item>
++    </string-array>
++
+ </resources>
+diff --git a/rro_overlays/NetworkStackOverlayMIUI/res/values-zh-rCN/config.xml b/rro_overlays/NetworkStackOverlayMIUI/res/values/config.xml
+similarity index 72%
+rename from rro_overlays/NetworkStackOverlayMIUI/res/values-zh-rCN/config.xml
+rename to rro_overlays/NetworkStackOverlayMIUI/res/values/config.xml
+index 32cee65..d0e8977 100644
+--- a/rro_overlays/NetworkStackOverlayMIUI/res/values-zh-rCN/config.xml
++++ b/rro_overlays/NetworkStackOverlayMIUI/res/values/config.xml
+@@ -15,8 +15,11 @@
+      limitations under the License.
+ -->
+ <resources>
+-
++    <!-- Upstream kept these two only under values-zh-rCN/, so the MIUI probe
++         addresses were used just when the system language was Chinese, and every
++         other language fell back to connectivitycheck.gstatic.com. Both are
++         reachable here, so the condition becomes unconditional (values unchanged). -->
+     <string name="config_captive_portal_http_url">http://connect.rom.miui.com/generate_204</string>
+-
+     <string name="config_captive_portal_https_url">https://connect.rom.miui.com/generate_204</string>
+-</resources>
+\ No newline at end of file
++
++</resources>
+diff --git a/vendor.prop b/vendor.prop
+index ee47f49..a55b364 100644
+--- a/vendor.prop
++++ b/vendor.prop
+@@ -73,3 +73,10 @@ ro.vendor.camera.legacy_torch_strength_config=0|/sys/class/leds/led:torch_0/max_
+ 
+ # Wi-Fi
+ ro.boot.wificountrycode=CN
++
++# Display orientation
++# The panel is mounted physically portrait, so the display install orientation is 90
++# degrees: that makes "facing the screen, charger on the right, keyboard contacts at
++# the bottom" the natural direction (ROTATION_0), so boot animation, lock screen and
++# natural orientation agree. Touch alignment comes from idc/ - both halves are needed.
++ro.surface_flinger.primary_display_orientation=ORIENTATION_90

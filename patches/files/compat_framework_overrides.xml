@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Why this file exists, and why it is not an init.rc:
+
+  On a large screen (sw >= 600dp) Android 16 discards a fixed screenOrientation request twice
+  over. Target SDK 36 "universal resizability" downgrades it first (logcat: "Ignoring
+  manifest-declared fixed orientation ... since target sdk 36"), and whatever survives that is
+  then dropped by the display's ignoreOrientationRequest, which is on by default for large
+  screens. Aperture asks for a landscape window on such devices - its controls are a sidebar next
+  to the preview (packages/apps/Aperture: layout-w840dp-h600dp-land) - so both steps have to be
+  opted out of for the request to mean anything. The first one is opted out in the app's own
+  manifest (android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY). The second one cannot
+  be opted out from an app: it is change 236283604,
+  ActivityInfo.OVERRIDE_RESPECT_REQUESTED_ORIENTATION, whose stated purpose is to exclude the
+  packages it is applied to from that display behaviour, and only the device can apply it.
+
+  This file is that application. CompatConfig loads /product/etc/appcompat/
+  compat_framework_overrides.xml at the start of every boot (STATIC_OVERRIDES_PRODUCT_DIR,
+  before the copy under /data/misc/appcompat), so a value here is the device default and is
+  re-asserted after every flash rather than depending on something running at boot. Measured on
+  device with the /data copy deleted: the override is in place once boot completes, the framework
+  then writes it back into /data/misc/appcompat/compat_framework_overrides.xml itself, and there
+  is no avc denial. "am compat" still wins over this, because the /data file is loaded after it.
+
+  An earlier revision of this change ran "am compat enable 236283604 org.lineageos.aperture" from
+  an init.rc instead. It works only through a shell wrapper: init execs /system/bin/am in
+  u:r:shell:s0 and SELinux refuses the entrypoint, because am is a shebang script labelled
+  system_file while the shell domain may only be entered through a shell_exec file. Two moving
+  parts for something a file can say, so the rc is gone.
+
+  Format is the framework's own: this is the element CompatConfig writes to
+  /data/misc/appcompat/compat_framework_overrides.xml after "am compat enable", copied verbatim
+  (min/max version codes are the full range, i.e. every version of the app).
+-->
+<overrides>
+    <change-overrides changeId="236283604">
+        <validated>
+            <override-value packageName="org.lineageos.aperture" enabled="true">
+            </override-value>
+        </validated>
+        <raw>
+            <raw-override-value packageName="org.lineageos.aperture" minVersionCode="-9223372036854775808" maxVersionCode="9223372036854775807" enabled="true">
+            </raw-override-value>
+        </raw>
+    </change-overrides>
+</overrides>

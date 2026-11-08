@@ -1,0 +1,137 @@
+diff --git a/services/camera/libcameraservice/common/CameraProviderManager.cpp b/services/camera/libcameraservice/common/CameraProviderManager.cpp
+index cfa8e6d..5c41026 100644
+--- a/services/camera/libcameraservice/common/CameraProviderManager.cpp
++++ b/services/camera/libcameraservice/common/CameraProviderManager.cpp
+@@ -46,6 +46,7 @@
+ #include <camera_metadata_hidden.h>
+ #include <android-base/parseint.h>
+ #include <android-base/logging.h>
++#include <android-base/properties.h>
+ #include <android/content/res/CameraCompatibilityInfo.h>
+ #include <cutils/properties.h>
+ #include <hwbinder/IPCThreadState.h>
+@@ -1808,6 +1809,76 @@ status_t CameraProviderManager::ProviderInfo::DeviceInfo3::fixupManualFlashStren
+     return res;
+ }
+ 
++status_t CameraProviderManager::ProviderInfo::DeviceInfo3::
++        fixupSensorOrientationForInstallRotation() {
++    // SENSOR_ORIENTATION is defined as the clockwise rotation needed to make the camera image
++    // upright with respect to the display's natural orientation. When the display is installed
++    // rotated, its natural orientation moves, so the value authored for the panel's own
++    // coordinate system has to move by the same amount.
++    //
++    // The sign of that move depends on which side the camera faces: a front-facing stream carries
++    // one more horizontal mirror than a back-facing one, and mirroring does not commute with
++    // rotation (M R(t) = R(-t) M), so the same reference-frame move shows up with the opposite
++    // sign for the two. Measured on elish with the display installed at ORIENTATION_90: the back
++    // camera needs -90 and the front camera +90; applying one sign to both leaves exactly one of
++    // them off by 180.
++    int installDegrees = 0;
++    const std::string orientation = android::base::GetProperty(
++            "ro.surface_flinger.primary_display_orientation", "ORIENTATION_0");
++    if (orientation == "ORIENTATION_90") {
++        installDegrees = 90;
++    } else if (orientation == "ORIENTATION_180") {
++        installDegrees = 180;
++    } else if (orientation == "ORIENTATION_270") {
++        installDegrees = 270;
++    }
++    if (installDegrees == 0) {
++        // Display is not installed rotated; nothing to compensate for.
++        return OK;
++    }
++
++    camera_metadata_entry facing = mCameraCharacteristics.find(ANDROID_LENS_FACING);
++    if (facing.count == 0) {
++        ALOGW("%s: ANDROID_LENS_FACING not present, not adjusted", __FUNCTION__);
++        return OK;
++    }
++    const bool frontFacing = (facing.data.u8[0] == ANDROID_LENS_FACING_FRONT);
++    const int32_t delta = frontFacing ? installDegrees : (360 - installDegrees);
++
++    camera_metadata_entry entry = mCameraCharacteristics.find(ANDROID_SENSOR_ORIENTATION);
++    if (entry.count == 0) {
++        ALOGW("%s: ANDROID_SENSOR_ORIENTATION not present, not adjusted", __FUNCTION__);
++        return OK;
++    }
++
++    const int32_t original = entry.data.i32[0];
++    const int32_t adjusted = (original + delta) % 360;
++    if (adjusted == original) {
++        return OK;
++    }
++
++    status_t res = mCameraCharacteristics.update(ANDROID_SENSOR_ORIENTATION, &adjusted, 1);
++    if (res != OK) {
++        ALOGE("%s: Unable to update ANDROID_SENSOR_ORIENTATION: %s (%d)",
++                __FUNCTION__, strerror(-res), res);
++        return res;
++    }
++    if (mCameraCharNoPCOverride != nullptr) {
++        res = mCameraCharNoPCOverride->update(ANDROID_SENSOR_ORIENTATION, &adjusted, 1);
++        if (res != OK) {
++            ALOGE("%s: Unable to update filtered ANDROID_SENSOR_ORIENTATION: %s (%d)",
++                    __FUNCTION__, strerror(-res), res);
++            return res;
++        }
++    }
++
++    ALOGI("%s: Sensor orientation for camera %s adjusted %d -> %d (facing %s) for display "
++            "installed at %d",
++            __FUNCTION__, mId.c_str(), original, adjusted, frontFacing ? "front" : "back",
++            installDegrees);
++    return OK;
++}
++
+ status_t CameraProviderManager::ProviderInfo::DeviceInfo3::fixupMonochromeTags() {
+     status_t res = OK;
+     auto& c = mCameraCharacteristics;
+diff --git a/services/camera/libcameraservice/common/CameraProviderManager.h b/services/camera/libcameraservice/common/CameraProviderManager.h
+index 6af6c6f..8e0874c 100644
+--- a/services/camera/libcameraservice/common/CameraProviderManager.h
++++ b/services/camera/libcameraservice/common/CameraProviderManager.h
+@@ -781,6 +781,8 @@ private:
+             SystemCameraKind getSystemCameraKind();
+             status_t fixupMonochromeTags();
+             status_t fixupTorchStrengthTags();
++            // Adjusts ANDROID_SENSOR_ORIENTATION for a display that is installed rotated.
++            status_t fixupSensorOrientationForInstallRotation();
+             status_t fixupManualFlashStrengthControlTags(CameraMetadata& ch);
+             status_t addDynamicDepthTags(bool maxResolution = false);
+             status_t deriveHeicTags(bool maxResolution = false);
+diff --git a/services/camera/libcameraservice/common/aidl/AidlProviderInfo.cpp b/services/camera/libcameraservice/common/aidl/AidlProviderInfo.cpp
+index 4c19ccf..6af0228 100644
+--- a/services/camera/libcameraservice/common/aidl/AidlProviderInfo.cpp
++++ b/services/camera/libcameraservice/common/aidl/AidlProviderInfo.cpp
+@@ -586,6 +586,12 @@ AidlProviderInfo::AidlDeviceInfo3::AidlDeviceInfo3(
+                 __FUNCTION__, strerror(-res), res);
+         return;
+     }
++    res = fixupSensorOrientationForInstallRotation();
++    if (OK != res) {
++        // Only affects how clients rotate the image, so a failure here must not drop the camera.
++        ALOGE("%s: Unable to adjust sensor orientation for installed display rotation: %s (%d)",
++                __FUNCTION__, strerror(-res), res);
++    }
+     res = fixupManualFlashStrengthControlTags(mCameraCharacteristics);
+     if (OK != res) {
+         ALOGE("%s: Unable to fix up manual flash strength control tags: %s (%d)",
+diff --git a/services/camera/libcameraservice/common/hidl/HidlProviderInfo.cpp b/services/camera/libcameraservice/common/hidl/HidlProviderInfo.cpp
+index 790c580..e36c797 100644
+--- a/services/camera/libcameraservice/common/hidl/HidlProviderInfo.cpp
++++ b/services/camera/libcameraservice/common/hidl/HidlProviderInfo.cpp
+@@ -622,6 +622,13 @@ HidlProviderInfo::HidlDeviceInfo3::HidlDeviceInfo3(
+         return;
+     }
+ 
++    res = fixupSensorOrientationForInstallRotation();
++    if (OK != res) {
++        // Only affects how clients rotate the image, so a failure here must not drop the camera.
++        ALOGE("%s: Unable to adjust sensor orientation for installed display rotation: %s (%d)",
++                __FUNCTION__, strerror(-res), res);
++    }
++
+     res = fixupManualFlashStrengthControlTags(mCameraCharacteristics);
+     if (OK != res) {
+         ALOGE("%s: Unable to fix up manual flash strength control tags: %s (%d)",

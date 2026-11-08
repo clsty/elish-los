@@ -1,0 +1,61 @@
+diff --git a/kernel/manager/apk_sign.c b/kernel/manager/apk_sign.c
+index d60e5d56..e4276719 100644
+--- a/kernel/manager/apk_sign.c
++++ b/kernel/manager/apk_sign.c
+@@ -425,16 +425,20 @@ int get_pkg_from_apk_path(char *pkg, const char *path)
+     if (!last_slash || !second_last_slash)
+         return -1;
+ 
+-    const char *last_hyphen = strchr(second_last_slash, '-');
+-    if (!last_hyphen || last_hyphen > last_slash)
+-        return -1;
+-
+-    int pkg_len = last_hyphen - second_last_slash - 1;
++    // /data/app/<hash>/<pkg>-<hash>/ has a hyphen after the package name. A
++    // preinstalled /product/app/<pkg>/ has none, and there the whole segment is the
++    // package. Look for the hyphen inside the segment only, so a hyphen further down
++    // the path cannot be mistaken for the separator (strchr() would run past it).
++    const char *segment = second_last_slash + 1;
++    const char *hyphen = memchr(segment, '-', last_slash - segment);
++    const char *pkg_end = hyphen ? hyphen : last_slash;
++
++    int pkg_len = pkg_end - segment;
+     if (pkg_len >= KSU_MAX_PACKAGE_NAME || pkg_len <= 0)
+         return -1;
+ 
+     // Copying the package name
+-    strncpy(pkg, second_last_slash + 1, pkg_len);
++    strncpy(pkg, segment, pkg_len);
+     pkg[pkg_len] = '\0';
+ 
+     return 0;
+diff --git a/kernel/manager/throne_tracker.c b/kernel/manager/throne_tracker.c
+index f6c65fc5..81b80a41 100644
+--- a/kernel/manager/throne_tracker.c
++++ b/kernel/manager/throne_tracker.c
+@@ -221,7 +221,10 @@ void search_manager(const char *path, int depth, struct list_head *uid_data)
+             // we were calling is_manager_apk inside iterate_dir
+             // now we defer file opens after iterate_dir
+             // this way we dont open apks while inside that
+-            if (!strstarts(candidate_path, "/data/ap"))
++            // The candidate has to belong to the root this call is scanning. It used
++            // to be hardcoded to /data/ap, which silently drops every hit when the
++            // caller asks about somewhere else (see the /product/app scan below).
++            if (!strstarts(candidate_path, path))
+                 goto skip_iterate;
+ 
+             bool is_manager = is_manager_apk(candidate_path, &signature_index);
+@@ -403,6 +406,13 @@ void do_track_throne(void *data)
+     if (need_search) {
+         pr_info("Searching for manager(s)...\n");
+         search_manager("/data/app", 2, &uid_list);
++        // This ROM preinstalls the manager into /product/app. It matters that the
++        // scan finds it: a manager that is never crowned does not go through
++        // ksu_is_manager_uid() in hook/setuid_hook.c, so __NR_reboot is never
++        // allowed in its seccomp filter, and every exec of libksud.so from it dies
++        // with SIGSYS (SuSFS' supercall borrows reboot(2)). Same layout as
++        // /data/app: <root>/<pkg>/base.apk, hence depth 2.
++        search_manager("/product/app", 2, &uid_list);
+         pr_info("Manager search finished\n");
+     }
+ 

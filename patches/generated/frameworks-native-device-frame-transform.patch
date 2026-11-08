@@ -1,0 +1,364 @@
+diff --git a/services/sensorservice/Android.bp b/services/sensorservice/Android.bp
+index f0eab38a59..ddb0b246dd 100644
+--- a/services/sensorservice/Android.bp
++++ b/services/sensorservice/Android.bp
+@@ -27,6 +27,7 @@ cc_library {
+         "AidlSensorHalWrapper.cpp",
+         "BatteryService.cpp",
+         "CorrectedGyroSensor.cpp",
++        "DeviceFrameTransform.cpp",
+         "Fusion.cpp",
+         "GravitySensor.cpp",
+         "HidlSensorHalWrapper.cpp",
+diff --git a/services/sensorservice/DeviceFrameTransform.cpp b/services/sensorservice/DeviceFrameTransform.cpp
+new file mode 100644
+index 0000000000..9a38a11651
+--- /dev/null
++++ b/services/sensorservice/DeviceFrameTransform.cpp
+@@ -0,0 +1,203 @@
++/*
++ * Copyright (C) 2026 The LineageOS Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#include "DeviceFrameTransform.h"
++
++#include <android-base/properties.h>
++#include <log/log.h>
++
++#include <algorithm>
++#include <cmath>
++#include <string>
++
++namespace android {
++namespace {
++
++constexpr char kInstallOrientationProp[] = "ro.surface_flinger.primary_display_orientation";
++
++double radians(double degrees) {
++    return degrees * M_PI / 180.0;
++}
++
++double degreesFrom(double radiansValue) {
++    return radiansValue * 180.0 / M_PI;
++}
++
++// The property is an enum, not a number.
++int installDegreesFromProperty() {
++    const std::string value = android::base::GetProperty(kInstallOrientationProp, "");
++    if (value == "ORIENTATION_90") {
++        return 90;
++    } else if (value == "ORIENTATION_180") {
++        return 180;
++    } else if (value == "ORIENTATION_270") {
++        return 270;
++    }
++    // ORIENTATION_0, unset, or a value we do not recognise: publish the HAL frame as is.
++    return 0;
++}
++
++}  // namespace
++
++DeviceFrameTransform::DeviceFrameTransform() {
++    mInstallDegrees = installDegreesFromProperty();
++    if (mInstallDegrees == 0) {
++        return;
++    }
++    mCos = static_cast<float>(std::cos(radians(mInstallDegrees)));
++    mSin = static_cast<float>(std::sin(radians(mInstallDegrees)));
++    // A pose whose top edge is the frame's +Y is ROTATION_0. Rotating the frame
++    // the panel is installed by moves that pose backwards through the enum: in
++    // a frame installed 90 degrees counter-clockwise it is ROTATION_3.
++    mEnumStep = (4 - mInstallDegrees / 90) & 3;
++    ALOGI("Panel installed at %d degrees: publishing one public device frame, "
++          "v_public = Rz(+%d) * v_hal, TYPE_DEVICE_ORIENTATION step %+d",
++          mInstallDegrees, mInstallDegrees, mEnumStep);
++}
++
++void DeviceFrameTransform::toPublicFrame(sensors_event_t* event) const {
++    apply(event, true);
++}
++
++void DeviceFrameTransform::toHalFrame(sensors_event_t* event) const {
++    apply(event, false);
++}
++
++void DeviceFrameTransform::apply(sensors_event_t* event, bool toPublic) const {
++    if (event == nullptr || mInstallDegrees == 0) {
++        return;
++    }
++
++    // The basis change is Rz(+install) going out to clients and its transpose
++    // coming back from them, which is the same rotation with the sine flipped.
++    const float c = mCos;
++    const float s = toPublic ? mSin : -mSin;
++
++    switch (event->type) {
++        case SENSOR_TYPE_ACCELEROMETER:
++        case SENSOR_TYPE_GRAVITY:
++        case SENSOR_TYPE_LINEAR_ACCELERATION:
++        case SENSOR_TYPE_GYROSCOPE:
++        case SENSOR_TYPE_MAGNETIC_FIELD:
++        case SENSOR_TYPE_ACCELEROMETER_UNCALIBRATED:
++        case SENSOR_TYPE_GYROSCOPE_UNCALIBRATED:
++        case SENSOR_TYPE_MAGNETIC_FIELD_UNCALIBRATED: {
++            const auto rotateVec3 = [c, s](float* v) {
++                const float x = v[0];
++                const float y = v[1];
++                v[0] = c * x - s * y;
++                v[1] = s * x + c * y;
++                // The panel is not flipped over, so v[2] stays as it is.
++            };
++            rotateVec3(event->data);
++            // The uncalibrated variants carry their bias estimate in data[3..5],
++            // in the same frame as data[0..2]: M(v - b) == Mv - Mb, so both
++            // halves have to move together or the bias stops meaning anything.
++            if (event->type == SENSOR_TYPE_ACCELEROMETER_UNCALIBRATED ||
++                event->type == SENSOR_TYPE_GYROSCOPE_UNCALIBRATED ||
++                event->type == SENSOR_TYPE_MAGNETIC_FIELD_UNCALIBRATED) {
++                rotateVec3(event->data + 3);
++            }
++            break;
++        }
++
++        case SENSOR_TYPE_ROTATION_VECTOR:
++        case SENSOR_TYPE_GAME_ROTATION_VECTOR:
++        case SENSOR_TYPE_GEOMAGNETIC_ROTATION_VECTOR: {
++            // Android stores these as (x, y, z, w) and the matrix they describe
++            // maps a device vector onto the world frame, so a change of the
++            // device basis is a right-multiplication by that basis, not a
++            // conjugation: the world frame is not ours to rotate.
++            const double half = 0.5 * radians(toPublic ? -mInstallDegrees : mInstallDegrees);
++            const float qc = static_cast<float>(std::cos(half));
++            const float qs = static_cast<float>(std::sin(half));
++
++            const float x = event->data[0];
++            const float y = event->data[1];
++            const float z = event->data[2];
++            const float w = event->data[3];
++            // Hamilton product with (0, 0, qs, qc). data[4], where a heading
++            // accuracy may sit, is left alone, and so is the sign of w:
++            // normalising it here would introduce jumps.
++            event->data[0] = qc * x + qs * y;
++            event->data[1] = qc * y - qs * x;
++            event->data[2] = qc * z + qs * w;
++            event->data[3] = qc * w - qs * z;
++            break;
++        }
++
++        case SENSOR_TYPE_ORIENTATION: {
++            // OrientationSensor.cpp, the AOSP implementation of this type,
++            // extracts the three angles from a world->device matrix A as
++            //     azimuth = atan2(-A[0][1], A[0][0])
++            //     pitch   = atan2(-A[1][2], A[2][2])
++            //     roll    = asin( A[0][2])
++            // (that source indexes its mat33_t by column) and A is built as
++            // Rx(pitch) * Ry(roll) * Rz(azimuth). Changing the device basis
++            // left-multiplies A by Rz(+install), which only mixes the two rows
++            // the extraction reads. Verified to agree with the closed form for a
++            // 90 degree install angle, and to be its own inverse going back.
++            const double cc = c;
++            const double ss = s;
++            const double az = radians(event->data[0]);
++            const double pitch = radians(event->data[1]);
++            const double roll = radians(event->data[2]);
++
++            const double ca = std::cos(az), sa = std::sin(az);
++            const double cp = std::cos(pitch), sp = std::sin(pitch);
++            const double cr = std::cos(roll), sr = std::sin(roll);
++
++            const double a00 = cr * ca, a01 = -cr * sa, a02 = sr;
++            const double a10 = cp * sa + sp * sr * ca;
++            const double a11 = cp * ca - sp * sr * sa;
++            const double a12 = -sp * cr;
++            const double a22 = cp * cr;
++
++            double newAz = degreesFrom(std::atan2(-(cc * a01 - ss * a11), cc * a00 - ss * a10));
++            newAz = std::fmod(newAz + 360.0, 360.0);
++            const double newPitch = degreesFrom(std::atan2(-(ss * a02 + cc * a12), a22));
++            const double newRoll =
++                    degreesFrom(std::asin(std::clamp(cc * a02 - ss * a12, -1.0, 1.0)));
++
++            event->data[0] = static_cast<float>(newAz);
++            event->data[1] = static_cast<float>(newPitch);
++            event->data[2] = static_cast<float>(newRoll);
++            break;
++        }
++
++        case SENSOR_TYPE_DEVICE_ORIENTATION: {
++            // Not a vector: a quantised pose, an index 0..3 for which edge of
++            // the panel is up. It needs its own step, and it matters more than
++            // the vectors do, because WindowOrientationListener prefers this
++            // sensor when it exists, so auto rotation reads exactly this number.
++            const float value = event->data[0];
++            if (value >= 0.0f && value <= 3.0f && value == std::floor(value)) {
++                const int step = toPublic ? mEnumStep : ((4 - mEnumStep) & 3);
++                event->data[0] = static_cast<float>((static_cast<int>(value) + step) & 3);
++            }
++            break;
++        }
++
++        default:
++            // Scalars, metadata (flush complete, dynamic sensor connect),
++            // additional info and vendor private types are left alone. Additional
++            // info in particular is not simply a vector: sensor placement and
++            // calibration matrices name their own frames.
++            break;
++    }
++}
++
++}  // namespace android
+diff --git a/services/sensorservice/DeviceFrameTransform.h b/services/sensorservice/DeviceFrameTransform.h
+new file mode 100644
+index 0000000000..ffd7410f57
+--- /dev/null
++++ b/services/sensorservice/DeviceFrameTransform.h
+@@ -0,0 +1,82 @@
++/*
++ * Copyright (C) 2026 The LineageOS Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#pragma once
++
++#include <hardware/sensors.h>
++
++namespace android {
++
++/*
++ * Boundary transform between two device coordinate frames.
++ *
++ * The sensor implementation (here: the SLPI firmware and its HAL) reports in
++ * the vendor's original frame, which is the panel's *unrotated* frame. When
++ * the panel is installed rotated -- ro.surface_flinger.primary_display_orientation
++ * is not ORIENTATION_0 -- the natural orientation that the framework and every
++ * client reason about is a frame rotated relative to that, and nothing in
++ * Android propagates the install orientation into SensorEvent.values. Clients
++ * that derive a tilt from gravity then end up off by exactly that angle: auto
++ * rotation, a camera app placing its controls, a compass.
++ *
++ * So: convert once, at the single place where HAL events enter the framework
++ * (SensorDevice::poll()), and publish one public device frame -- fixed to the
++ * installed natural orientation, independent of the current display rotation.
++ * Nothing downstream has to know about it, including the virtual sensors that
++ * SensorService computes from these very events, which is why the transform is
++ * deliberately *not* applied again at the delivery end.
++ *
++ * Both directions are exposed, because injection goes the other way: a client
++ * injects in the public frame, the HAL expects its own, and poll() converts
++ * back, so an injected value comes out unchanged.
++ *
++ * When the install orientation is ORIENTATION_0 or unset -- every device that
++ * was not built this way -- both entry points are no-ops and nothing is
++ * logged.
++ */
++class DeviceFrameTransform {
++public:
++    DeviceFrameTransform();
++
++    // HAL frame -> public frame. For events returned by SensorDevice::poll().
++    void toPublicFrame(sensors_event_t* event) const;
++
++    // Public frame -> HAL frame. For events passed to the HAL by
++    // SensorDevice::injectSensorData().
++    void toHalFrame(sensors_event_t* event) const;
++
++    bool isEnabled() const {
++        return mInstallDegrees != 0;
++    }
++
++    // The install orientation this transform was built for, in degrees.
++    int installDegrees() const {
++        return mInstallDegrees;
++    }
++
++private:
++    void apply(sensors_event_t* event, bool toPublic) const;
++
++    int mInstallDegrees = 0;
++    // The basis change is a rotation about the panel normal: cos and sin of
++    // the install angle are all that is needed.
++    float mCos = 1.0f;
++    float mSin = 0.0f;
++    // How far TYPE_DEVICE_ORIENTATION moves, in quarter turns.
++    int mEnumStep = 0;
++};
++
++}  // namespace android
+diff --git a/services/sensorservice/SensorDevice.cpp b/services/sensorservice/SensorDevice.cpp
+index ed0f8ad0e5..af7974ff10 100644
+--- a/services/sensorservice/SensorDevice.cpp
++++ b/services/sensorservice/SensorDevice.cpp
+@@ -383,6 +383,11 @@ ssize_t SensorDevice::poll(sensors_event_t* buffer, size_t count) {
+ 
+     if (eventsRead > 0) {
+         for (ssize_t i = 0; i < eventsRead; i++) {
++            // This is the one place every HAL event enters the framework, so it
++            // is where the device frame is unified; quantising afterwards keeps
++            // the rounding in the frame we publish.
++            mDeviceFrame.toPublicFrame(&buffer[i]);
++
+             float resolution = getResolutionForSensor(buffer[i].sensor);
+             android::SensorDeviceUtils::quantizeSensorEventValues(&buffer[i], resolution);
+ 
+@@ -816,6 +821,12 @@ status_t SensorDevice::injectSensorData(const sensors_event_t* injected_sensor_e
+              injected_sensor_event->data[2], injected_sensor_event->data[3],
+              injected_sensor_event->data[4], injected_sensor_event->data[5]);
+ 
++    // Clients inject in the frame we publish, the HAL expects its own, and poll()
++    // converts on the way back out, so an injected value round-trips unchanged.
++    sensors_event_t halEvent = *injected_sensor_event;
++    mDeviceFrame.toHalFrame(&halEvent);
++    injected_sensor_event = &halEvent;
++
+     if (mInHalBypassMode) {
+         std::lock_guard _l(mHalBypassLock);
+         mHalBypassInjectedEventQueue.push(*injected_sensor_event);
+diff --git a/services/sensorservice/SensorDevice.h b/services/sensorservice/SensorDevice.h
+index f74b4762e0..d259bb385e 100644
+--- a/services/sensorservice/SensorDevice.h
++++ b/services/sensorservice/SensorDevice.h
+@@ -17,6 +17,7 @@
+ #ifndef ANDROID_SENSOR_DEVICE_H
+ #define ANDROID_SENSOR_DEVICE_H
+ 
++#include "DeviceFrameTransform.h"
+ #include "HidlSensorHalWrapper.h"
+ #include "ISensorHalWrapper.h"
+ 
+@@ -243,6 +244,13 @@ private:
+ 
+     bool mIsDirectReportSupported;
+ 
++    // Converts what the HAL reports into the one device frame we publish, and
++    // the other way round for injected events. See DeviceFrameTransform.h for
++    // why this belongs here: poll() below is where every HAL event enters, and
++    // the virtual sensors SensorService computes are built from the events this
++    // has already converted, so they must not be converted again.
++    DeviceFrameTransform mDeviceFrame;
++
+     std::mutex mHalBypassLock;
+     std::condition_variable mHalBypassCV;
+     std::queue<sensors_event_t> mHalBypassInjectedEventQueue;

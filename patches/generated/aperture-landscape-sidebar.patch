@@ -1,0 +1,772 @@
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 639a85e..3d775c2 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -42,6 +42,21 @@
+         android:theme="@style/Theme.Aperture"
+         tools:targetApi="tiramisu">
+ 
++        <!-- The camera UI lays its controls out as a sidebar next to the preview on landscape
++             natural devices (see layout-w840dp-h600dp-land), so the three camera activities
++             declare a landscape orientation. On a large screen running target SDK 36 such a
++             declaration is treated as a suggestion and dropped (logcat: "Ignoring
++             manifest-declared fixed orientation ... since target sdk 36") unless the app says it
++             does not take part in universal resizability, which is what this property does. The
++             other half, the display's ignoreOrientationRequest, cannot be opted out of from here;
++             a device that wants these activities pinned to landscape enables
++             OVERRIDE_RESPECT_REQUESTED_ORIENTATION (236283604) for this package. Without both,
++             the window follows the user rotation setting and the sidebar shares the screen with
++             black bars. -->
++        <property
++            android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY"
++            android:value="true" />
++
+         <uses-library
+             android:name="androidx.camera.extensions.impl"
+             android:required="false" />
+@@ -52,7 +67,7 @@
+             android:configChanges="orientation|screenLayout|screenSize|smallestScreenSize|keyboardHidden"
+             android:exported="true"
+             android:launchMode="singleTask"
+-            android:screenOrientation="nosensor"
++            android:screenOrientation="landscape"
+             android:taskAffinity=".CameraActivity"
+             android:theme="@style/Theme.Aperture.Camera"
+             android:windowSoftInputMode="stateAlwaysHidden|adjustPan">
+@@ -85,7 +100,7 @@
+             android:name=".CaptureActivity"
+             android:configChanges="orientation|screenLayout|screenSize|smallestScreenSize|keyboardHidden"
+             android:exported="true"
+-            android:screenOrientation="nosensor"
++            android:screenOrientation="landscape"
+             android:theme="@style/Theme.Aperture.Camera"
+             android:visibleToInstantApps="true"
+             android:windowSoftInputMode="stateAlwaysHidden|adjustPan">
+@@ -101,7 +116,7 @@
+             android:name=".QrScannerActivity"
+             android:configChanges="orientation|screenLayout|screenSize|smallestScreenSize|keyboardHidden"
+             android:exported="true"
+-            android:screenOrientation="nosensor"
++            android:screenOrientation="landscape"
+             android:theme="@style/Theme.Aperture.Camera"
+             android:visibleToInstantApps="true"
+             android:windowSoftInputMode="stateAlwaysHidden|adjustPan" />
+diff --git a/app/src/main/java/org/lineageos/aperture/CameraActivity.kt b/app/src/main/java/org/lineageos/aperture/CameraActivity.kt
+index 9d51ad1..529f476 100644
+--- a/app/src/main/java/org/lineageos/aperture/CameraActivity.kt
++++ b/app/src/main/java/org/lineageos/aperture/CameraActivity.kt
+@@ -24,6 +24,7 @@ import android.os.Looper
+ import android.os.Message
+ import android.provider.MediaStore
+ import android.util.Log
++import android.util.Size
+ import android.view.GestureDetector
+ import android.view.KeyEvent
+ import android.view.MotionEvent
+@@ -123,6 +124,7 @@ import org.lineageos.aperture.models.VideoStabilizationMode
+ import org.lineageos.aperture.ui.dialogs.LocationPermissionsDialog
+ import org.lineageos.aperture.ui.dialogs.QrBottomSheetDialog
+ import org.lineageos.aperture.ui.views.CameraModeSelectorLayout
++import org.lineageos.aperture.ui.views.CaptureFrameMaskView
+ import org.lineageos.aperture.ui.views.CapturePreviewLayout
+ import org.lineageos.aperture.ui.views.CountDownView
+ import org.lineageos.aperture.ui.views.GridView
+@@ -167,6 +169,10 @@ open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
+     private val islandView by lazy { findViewById<IslandView>(R.id.islandView) }
+     private val lensSelectorLayout by lazy { findViewById<LensSelectorLayout>(R.id.lensSelectorLayout) }
+     private val levelerView by lazy { findViewById<LevelerView>(R.id.levelerView) }
++    // Only present in the landscape side panel layout
++    private val captureFrameMaskView: CaptureFrameMaskView? by lazy {
++        findViewById<CaptureFrameMaskView?>(R.id.captureFrameMaskView)
++    }
+     private val mainLayout by lazy { findViewById<ConstraintLayout>(R.id.mainLayout) }
+     private val micButton by lazy { findViewById<Button>(R.id.micButton) }
+     private val previewBlurView by lazy { findViewById<PreviewBlurView>(R.id.previewBlurView) }
+@@ -1454,6 +1460,30 @@ open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
+         }
+     }
+ 
++    /**
++     * Update the viewfinder capture-frame mask. The viewfinder always shows the camera's
++     * full 4:3 field-of-view framing; when the capture use cases about to be bound produce
++     * a different aspect, the difference is dimmed so the actually captured frame is
++     * visible. The nominal output aspect is used, so the boundary is approximate to about
++     * 1% of the viewfinder height on ratios where the HAL's stream is slightly off-nominal.
++     */
++    private fun updateCaptureFrameMask(cameraConfiguration: CameraConfiguration) {
++        val maskView = captureFrameMaskView ?: return
++        val captureAspect = when (cameraConfiguration) {
++            is CameraConfiguration.Photo -> when (cameraConfiguration.photoAspectRatio) {
++                AspectRatio.RATIO_16_9 -> Size(16, 9)
++                else -> null
++            }
++            is CameraConfiguration.Video -> when (cameraConfiguration.videoQuality) {
++                // SD is 480x360, a 4:3 aspect like the viewfinder itself
++                Quality.SD -> null
++                else -> Size(16, 9)
++            }
++            else -> null
++        }
++        maskView.setCaptureResolution(captureAspect)
++    }
++
+     /**
+      * Rebind cameraProvider use cases
+      */
+@@ -1620,6 +1650,9 @@ open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
+         lifecycleScope.launch {
+             viewModel.cameraController.initializationFuture.await()
+ 
++            // Use cases are bound at this point; refresh the capture-frame mask
++            updateCaptureFrameMask(cameraConfiguration)
++
+             val camera2CameraControl = viewModel.cameraController.camera2CameraControl ?: run {
+                 Log.wtf(LOG_TAG, "Camera2CameraControl not available even with camera ready?")
+                 return@launch
+diff --git a/app/src/main/java/org/lineageos/aperture/ui/views/CameraModeSelectorLayout.kt b/app/src/main/java/org/lineageos/aperture/ui/views/CameraModeSelectorLayout.kt
+index a32f3df..c65e31d 100644
+--- a/app/src/main/java/org/lineageos/aperture/ui/views/CameraModeSelectorLayout.kt
++++ b/app/src/main/java/org/lineageos/aperture/ui/views/CameraModeSelectorLayout.kt
+@@ -38,11 +38,26 @@ class CameraModeSelectorLayout @JvmOverloads constructor(
+     private var inSingleCaptureMode = false
+     private var cameraState = CameraState.IDLE
+ 
++    private var orientation = LinearLayout.HORIZONTAL
++
+     var onModeSelectedCallback: (cameraMode: CameraMode) -> Unit = {}
+ 
+     init {
++        context.obtainStyledAttributes(attrs, R.styleable.CameraModeSelectorLayout).apply {
++            try {
++                orientation = getInt(
++                    R.styleable.CameraModeSelectorLayout_android_orientation,
++                    LinearLayout.HORIZONTAL
++                )
++            } finally {
++                recycle()
++            }
++        }
++
+         inflate(context, R.layout.camera_mode_selector_layout, this)
+ 
++        cameraModeButtonsLinearLayout.orientation = orientation
++
+         for (cameraMode in CameraMode.entries) {
+             cameraToButton[cameraMode] = MaterialButton::class.cast(
+                 layoutInflater.inflate(
+@@ -73,7 +88,8 @@ class CameraModeSelectorLayout @JvmOverloads constructor(
+ 
+         // Animate camera mode change
+         doOnLayout {
+-            // Animate position
++            // Animate position. The highlight lives in the outer layout while the buttons
++            // live in the inner one, which is inset by its padding, hence the 16.px offset.
+             ValueAnimator.ofFloat(
+                 cameraModeHighlightButton.x, currentCameraModeButton.x + 16.px
+             ).apply {
+@@ -82,7 +98,17 @@ class CameraModeSelectorLayout @JvmOverloads constructor(
+                 }
+             }.start()
+ 
+-            // Animate width
++            ValueAnimator.ofFloat(
++                cameraModeHighlightButton.y, currentCameraModeButton.y + 16.px
++            ).apply {
++                addUpdateListener { valueAnimator ->
++                    cameraModeHighlightButton.y = valueAnimator.animatedValue as Float
++                }
++            }.start()
++
++            // Animate size. In horizontal mode the buttons share y and height, so animating
++            // them is a no-op there; in vertical mode the text widths differ and both axes
++            // have to follow.
+             ValueAnimator.ofInt(
+                 cameraModeHighlightButton.width, currentCameraModeButton.width
+             ).apply {
+@@ -90,6 +116,14 @@ class CameraModeSelectorLayout @JvmOverloads constructor(
+                     cameraModeHighlightButton.width = valueAnimator.animatedValue as Int
+                 }
+             }.start()
++
++            ValueAnimator.ofInt(
++                cameraModeHighlightButton.height, currentCameraModeButton.height
++            ).apply {
++                addUpdateListener { valueAnimator ->
++                    cameraModeHighlightButton.height = valueAnimator.animatedValue as Int
++                }
++            }.start()
+         }
+     }
+ 
+diff --git a/app/src/main/java/org/lineageos/aperture/ui/views/CaptureFrameMaskView.kt b/app/src/main/java/org/lineageos/aperture/ui/views/CaptureFrameMaskView.kt
+new file mode 100644
+index 0000000..89c0ee2
+--- /dev/null
++++ b/app/src/main/java/org/lineageos/aperture/ui/views/CaptureFrameMaskView.kt
+@@ -0,0 +1,124 @@
++/*
++ * SPDX-FileCopyrightText: The LineageOS Project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package org.lineageos.aperture.ui.views
++
++import android.content.Context
++import android.graphics.Canvas
++import android.graphics.Color
++import android.graphics.Paint
++import android.util.AttributeSet
++import android.util.Size
++import android.view.View
++
++/**
++ * Dims the parts of the viewfinder that will not be part of the captured media.
++ *
++ * The preview always shows the camera's full field of view. When the active capture
++ * use case has an aspect ratio that differs from the viewfinder's own, the difference
++ * is dimmed and a thin line marks the frame that will actually be captured. Nothing is
++ * drawn when the aspect ratios match or when no capture use case is active.
++ *
++ * This is a presentation-only overlay. It is not clickable, so touches fall through to
++ * the viewfinder underneath.
++ */
++class CaptureFrameMaskView @JvmOverloads constructor(
++    context: Context,
++    attrs: AttributeSet? = null
++) : View(context, attrs) {
++
++    private val bandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
++        color = Color.argb(180, 0, 0, 0)
++        style = Paint.Style.FILL
++    }
++
++    private val boundaryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
++        color = Color.argb(230, 255, 255, 255)
++        style = Paint.Style.FILL
++    }
++
++    private val boundaryThickness = 2f * resources.displayMetrics.density
++
++    // Relative aspect ratio difference that is still considered a match
++    private val aspectTolerance = 0.02f
++
++    private var captureResolution: Size? = null
++    private var bandIsHorizontal = false
++    private var bandThickness = 0
++
++    /**
++     * Set the output aspect of the active capture use case, carried as a [Size] (only the
++     * width-to-height ratio is used). Passing null, or a ratio that matches this view,
++     * clears the mask.
++     */
++    fun setCaptureResolution(resolution: Size?) {
++        captureResolution = resolution
++        recomputeBands()
++    }
++
++    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
++        super.onSizeChanged(w, h, oldw, oldh)
++        recomputeBands()
++    }
++
++    private fun recomputeBands() {
++        val resolution = captureResolution
++        if (resolution == null || resolution.width <= 0 || resolution.height <= 0 ||
++            width <= 0 || height <= 0) {
++            bandThickness = 0
++            invalidate()
++            return
++        }
++
++        val captureAspect = resolution.width.toFloat() / resolution.height
++        val viewAspect = width.toFloat() / height
++        bandThickness = when {
++            kotlin.math.abs(captureAspect - viewAspect) / viewAspect < aspectTolerance -> 0
++            captureAspect > viewAspect -> {
++                bandIsHorizontal = true
++                ((height - width / captureAspect) / 2f).toInt().coerceAtLeast(0)
++            }
++            else -> {
++                bandIsHorizontal = false
++                ((width - height * captureAspect) / 2f).toInt().coerceAtLeast(0)
++            }
++        }
++        invalidate()
++    }
++
++    override fun onDraw(canvas: Canvas) {
++        super.onDraw(canvas)
++        if (bandThickness <= 0) {
++            return
++        }
++        if (bandIsHorizontal) {
++            canvas.drawRect(0f, 0f, width.toFloat(), bandThickness.toFloat(), bandPaint)
++            canvas.drawRect(
++                0f, (height - bandThickness).toFloat(), width.toFloat(), height.toFloat(), bandPaint
++            )
++            canvas.drawRect(
++                0f, bandThickness.toFloat(), width.toFloat(),
++                bandThickness + boundaryThickness, boundaryPaint
++            )
++            canvas.drawRect(
++                0f, (height - bandThickness).toFloat() - boundaryThickness, width.toFloat(),
++                (height - bandThickness).toFloat(), boundaryPaint
++            )
++        } else {
++            canvas.drawRect(0f, 0f, bandThickness.toFloat(), height.toFloat(), bandPaint)
++            canvas.drawRect(
++                (width - bandThickness).toFloat(), 0f, width.toFloat(), height.toFloat(), bandPaint
++            )
++            canvas.drawRect(
++                bandThickness.toFloat(), 0f, bandThickness + boundaryThickness,
++                height.toFloat(), boundaryPaint
++            )
++            canvas.drawRect(
++                (width - bandThickness).toFloat() - boundaryThickness, 0f,
++                (width - bandThickness).toFloat(), height.toFloat(), boundaryPaint
++            )
++        }
++    }
++}
+diff --git a/app/src/main/res/layout-w840dp-h600dp-land/activity_camera.xml b/app/src/main/res/layout-w840dp-h600dp-land/activity_camera.xml
+new file mode 100644
+index 0000000..8562511
+--- /dev/null
++++ b/app/src/main/res/layout-w840dp-h600dp-land/activity_camera.xml
+@@ -0,0 +1,424 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++     SPDX-FileCopyrightText: The LineageOS Project
++     SPDX-License-Identifier: Apache-2.0
++-->
++<!--
++     Layout for a window that is already landscape because the device's natural orientation is
++     landscape (a tablet). The portrait layout pins the control chain to the window's bottom
++     edge, which on such a device cuts 367px off a 1600px tall window and leaves the preview a
++     2.6:1 strip with ~49% of the width lost to letterboxing.
++
++     Here the chain becomes a real sidebar: it runs along the right edge (the charging port
++     side on this tablet) and every control group is stacked vertically, so the buttons are
++     parallel to that edge instead of perpendicular to it. The width is not arbitrary:
++     1600px * 4:3 = 2133px, and 2560 - 2133 = 427px = 190dp, so the preview fills its area
++     with no letterboxing at all.
++
++     Only geometry differs from the portrait layout. The three groups are deliberately not one
++     evenly spaced chain (mode group top, capture group centered, secondary group bottom) so
++     that a changing number of lenses or modes cannot drag the shutter along.
++-->
++<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    xmlns:app="http://schemas.android.com/apk/res-auto"
++    xmlns:tools="http://schemas.android.com/tools"
++    android:id="@+id/mainLayout"
++    android:layout_width="match_parent"
++    android:layout_height="match_parent"
++    android:background="@android:color/black"
++    android:keepScreenOn="true"
++    tools:context=".CameraActivity">
++
++    <!-- Measured from the END edge so the sidebar keeps a fixed physical width regardless of
++         how wide the window is. -->
++    <androidx.constraintlayout.widget.Guideline
++        android:id="@+id/controlPanelGuideline"
++        android:layout_width="wrap_content"
++        android:layout_height="wrap_content"
++        android:orientation="vertical"
++        app:layout_constraintGuide_end="190dp" />
++
++    <androidx.camera.view.PreviewView
++        android:id="@+id/viewFinder"
++        android:layout_width="0dp"
++        android:layout_height="0dp"
++        android:soundEffectsEnabled="false"
++        app:layout_constraintBottom_toBottomOf="parent"
++        app:layout_constraintEnd_toStartOf="@+id/controlPanelGuideline"
++        app:layout_constraintStart_toStartOf="parent"
++        app:layout_constraintTop_toTopOf="parent"
++        app:scaleType="fitCenter" />
++
++    <org.lineageos.aperture.ui.views.PreviewBlurView
++        android:id="@+id/previewBlurView"
++        android:layout_width="0dp"
++        android:layout_height="0dp"
++        android:background="@android:color/black"
++        android:scaleType="centerCrop"
++        app:layout_constraintBottom_toBottomOf="@+id/viewFinder"
++        app:layout_constraintEnd_toEndOf="@+id/viewFinder"
++        app:layout_constraintStart_toStartOf="@+id/viewFinder"
++        app:layout_constraintTop_toTopOf="@+id/viewFinder" />
++
++    <ImageView
++        android:id="@+id/viewFinderFocus"
++        android:layout_width="75dp"
++        android:layout_height="75dp"
++        android:src="@drawable/camera_focus_circle"
++        android:visibility="invisible"
++        app:layout_constraintBottom_toBottomOf="@+id/viewFinder"
++        app:layout_constraintEnd_toEndOf="@+id/viewFinder"
++        app:layout_constraintStart_toStartOf="@+id/viewFinder"
++        app:layout_constraintTop_toTopOf="@+id/viewFinder"
++        tools:ignore="ContentDescription" />
++
++    <org.lineageos.aperture.ui.views.GridView
++        android:id="@+id/gridView"
++        android:layout_width="0dp"
++        android:layout_height="0dp"
++        app:layout_constraintBottom_toBottomOf="@+id/viewFinder"
++        app:layout_constraintEnd_toEndOf="@+id/viewFinder"
++        app:layout_constraintStart_toStartOf="@+id/viewFinder"
++        app:layout_constraintTop_toTopOf="@+id/viewFinder" />
++
++    <org.lineageos.aperture.ui.views.LevelerView
++        android:id="@+id/levelerView"
++        android:layout_width="0dp"
++        android:layout_height="0dp"
++        app:layout_constraintBottom_toBottomOf="@+id/viewFinder"
++        app:layout_constraintEnd_toEndOf="@+id/viewFinder"
++        app:layout_constraintStart_toStartOf="@+id/viewFinder"
++        app:layout_constraintTop_toTopOf="@+id/viewFinder" />
++
++    <org.lineageos.aperture.ui.views.CaptureFrameMaskView
++        android:id="@+id/captureFrameMaskView"
++        android:layout_width="0dp"
++        android:layout_height="0dp"
++        app:layout_constraintBottom_toBottomOf="@+id/viewFinder"
++        app:layout_constraintEnd_toEndOf="@+id/viewFinder"
++        app:layout_constraintStart_toStartOf="@+id/viewFinder"
++        app:layout_constraintTop_toTopOf="@+id/viewFinder" />
++
++    <org.lineageos.aperture.ui.views.IslandView
++        android:id="@+id/islandView"
++        android:layout_width="wrap_content"
++        android:layout_height="wrap_content"
++        android:layout_marginStart="12dp"
++        android:layout_marginTop="12dp"
++        android:layout_marginEnd="12dp"
++        android:layout_marginBottom="12dp"
++        android:visibility="gone"
++        app:layout_constraintStart_toStartOf="@+id/viewFinder"
++        app:layout_constraintTop_toTopOf="@+id/viewFinder" />
++
++    <org.lineageos.aperture.ui.views.CountDownView
++        android:id="@+id/countDownView"
++        android:layout_width="0dp"
++        android:layout_height="0dp"
++        android:visibility="invisible"
++        app:layout_constraintBottom_toBottomOf="@+id/viewFinder"
++        app:layout_constraintEnd_toEndOf="@+id/viewFinder"
++        app:layout_constraintStart_toStartOf="@+id/viewFinder"
++        app:layout_constraintTop_toTopOf="@+id/viewFinder" />
++
++    <org.lineageos.aperture.ui.views.HorizontalSlider
++        android:id="@+id/zoomLevel"
++        android:layout_width="250dp"
++        android:layout_height="32dp"
++        android:visibility="gone"
++        app:layout_constraintBottom_toBottomOf="@+id/viewFinder"
++        app:layout_constraintEnd_toEndOf="@+id/viewFinder"
++        app:layout_constraintStart_toStartOf="@+id/viewFinder"
++        app:thumbColor="@android:color/white"
++        app:thumbTextColor="@android:color/black"
++        app:thumbTextSize="10dp"
++        app:trackColor="#7FCCCCCC" />
++
++    <org.lineageos.aperture.ui.views.VerticalSlider
++        android:id="@+id/exposureLevel"
++        android:layout_width="32dp"
++        android:layout_height="250dp"
++        android:layout_marginEnd="8dp"
++        android:visibility="gone"
++        app:layout_constraintBottom_toBottomOf="@+id/viewFinder"
++        app:layout_constraintEnd_toEndOf="@+id/viewFinder"
++        app:layout_constraintTop_toTopOf="@+id/viewFinder"
++        app:thumbColor="@android:color/white"
++        app:thumbTextColor="@android:color/black"
++        app:thumbTextSize="10dp"
++        app:trackBorderColor="#a9a7aa"
++        app:trackColorGradient="true"
++        app:trackColorGradientCenter="#636363"
++        app:trackColorGradientEnd="#242424"
++        app:trackColorGradientStart="#8d9299" />
++
++    <!-- The PRO panel stays a horizontal strip; it belongs to the preview, not to the
++         sidebar, and its slide animation is vertical. -->
++    <HorizontalScrollView
++        android:id="@+id/secondaryTopBarLayout"
++        android:layout_width="0dp"
++        android:layout_height="wrap_content"
++        android:background="#99000000"
++        android:fillViewport="true"
++        android:scrollbars="none"
++        android:visibility="gone"
++        app:layout_constraintBottom_toBottomOf="@+id/viewFinder"
++        app:layout_constraintEnd_toEndOf="@+id/viewFinder"
++        app:layout_constraintStart_toStartOf="@+id/viewFinder">
++
++        <LinearLayout
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:gravity="top|center"
++            android:paddingVertical="8dp">
++
++            <!-- Cannot mess with fixed padding from here because of insets -->
++            <Space
++                android:layout_width="16dp"
++                android:layout_height="match_parent" />
++
++            <!-- Photo mode specific settings -->
++            <Button
++                android:id="@+id/aspectRatioButton"
++                style="@style/Theme.Aperture.Camera.SecondaryTopBarButton"
++                android:drawableTop="@drawable/ic_aspect_ratio"
++                android:text="@string/aspect_ratio_4_3" />
++
++            <Button
++                android:id="@+id/effectButton"
++                style="@style/Theme.Aperture.Camera.SecondaryTopBarButton"
++                android:drawableTop="@drawable/ic_blur_off"
++                android:text="@string/effect_none" />
++
++            <!-- Video mode specific settings -->
++            <Button
++                android:id="@+id/videoQualityButton"
++                style="@style/Theme.Aperture.Camera.SecondaryTopBarButton"
++                android:drawableTop="@drawable/ic_hd"
++                android:text="@string/video_quality_fhd" />
++
++            <Button
++                android:id="@+id/videoFrameRateButton"
++                style="@style/Theme.Aperture.Camera.SecondaryTopBarButton"
++                android:drawableTop="@drawable/ic_video_frame_rate"
++                android:text="@string/video_framerate_auto" />
++
++            <Button
++                android:id="@+id/videoDynamicRangeButton"
++                style="@style/Theme.Aperture.Camera.SecondaryTopBarButton"
++                android:drawableTop="@drawable/ic_hdr_off"
++                android:text="@string/video_dynamic_range_sdr" />
++
++            <Button
++                android:id="@+id/micButton"
++                style="@style/Theme.Aperture.Camera.SecondaryTopBarButton"
++                android:drawableTop="@drawable/ic_mic_off"
++                android:text="@string/mic_off" />
++
++            <!-- Common settings -->
++            <Button
++                android:id="@+id/timerButton"
++                style="@style/Theme.Aperture.Camera.SecondaryTopBarButton"
++                android:drawableTop="@drawable/ic_timer_off"
++                android:text="@string/timer_off" />
++
++            <Button
++                android:id="@+id/gridButton"
++                style="@style/Theme.Aperture.Camera.SecondaryTopBarButton"
++                android:drawableTop="@drawable/ic_grid_3x3_off"
++                android:text="@string/grid_off" />
++
++            <Button
++                android:id="@+id/settingsButton"
++                style="@style/Theme.Aperture.Camera.SecondaryTopBarButton"
++                android:drawableTop="@drawable/ic_settings"
++                android:text="@string/settings" />
++
++            <!-- Cannot mess with fixed padding from here because of insets -->
++            <Space
++                android:layout_width="16dp"
++                android:layout_height="match_parent" />
++
++        </LinearLayout>
++
++    </HorizontalScrollView>
++
++    <!-- Top of the sidebar: camera modes, stacked vertically -->
++    <org.lineageos.aperture.ui.views.CameraModeSelectorLayout
++        android:id="@+id/cameraModeSelectorLayout"
++        android:layout_width="0dp"
++        android:layout_height="wrap_content"
++        android:layout_marginTop="16dp"
++        android:orientation="vertical"
++        app:layout_constraintEnd_toEndOf="parent"
++        app:layout_constraintStart_toStartOf="@+id/controlPanelGuideline"
++        app:layout_constraintTop_toTopOf="parent" />
++
++    <!-- Middle of the sidebar: the capture controls, stacked vertically.
++         This group is centered on the *window*, not chained between the other two groups:
++         measured on device, the secondary group loses one button when the mode changes
++         (406px in PHOTO, 298px in VIDEO), and a chained middle group drifts by 49px along
++         with it, so the shutter would move under the thumb every time a mode was selected.
++         Centered on the window it stays put, and it also lines up with the vertical centre of
++         the preview. The three groups together are 1241px in a 1600px tall window, so there is
++         no risk of them colliding. -->
++    <androidx.constraintlayout.widget.ConstraintLayout
++        android:id="@+id/primaryBarLayout"
++        android:layout_width="0dp"
++        android:layout_height="wrap_content"
++        app:layout_constraintBottom_toBottomOf="parent"
++        app:layout_constraintEnd_toEndOf="parent"
++        app:layout_constraintStart_toStartOf="@+id/controlPanelGuideline"
++        app:layout_constraintTop_toTopOf="parent"
++        app:layout_constraintVertical_bias="0.5">
++
++        <ImageButton
++            android:id="@+id/shutterButton"
++            android:layout_width="75dp"
++            android:layout_height="75dp"
++            android:background="@null"
++            android:contentDescription="@string/shutter_button_description"
++            android:soundEffectsEnabled="false"
++            android:src="@drawable/avd_photo_capture"
++            app:layout_constraintBottom_toBottomOf="parent"
++            app:layout_constraintEnd_toEndOf="parent"
++            app:layout_constraintStart_toStartOf="parent"
++            app:layout_constraintTop_toTopOf="parent" />
++
++        <androidx.cardview.widget.CardView
++            android:id="@+id/galleryButtonCardView"
++            android:layout_width="60dp"
++            android:layout_height="60dp"
++            android:layout_gravity="center"
++            android:backgroundTint="?colorSecondaryContainer"
++            android:scaleType="fitXY"
++            app:cardCornerRadius="8dp"
++            app:layout_constraintBottom_toTopOf="@+id/shutterButton"
++            app:layout_constraintEnd_toEndOf="parent"
++            app:layout_constraintStart_toStartOf="parent"
++            app:layout_constraintTop_toTopOf="parent"
++            app:layout_constraintVertical_chainStyle="packed">
++
++            <FrameLayout
++                android:layout_width="match_parent"
++                android:layout_height="match_parent">
++
++                <ImageView
++                    android:id="@+id/galleryButtonIconImageView"
++                    android:layout_width="match_parent"
++                    android:layout_height="match_parent"
++                    android:contentDescription="@string/gallery_button_description"
++                    android:scaleX="0.50"
++                    android:scaleY="0.50"
++                    app:tint="?attr/colorOnSecondaryContainer" />
++
++                <ImageView
++                    android:id="@+id/galleryButtonPreviewImageView"
++                    android:layout_width="match_parent"
++                    android:layout_height="match_parent"
++                    android:contentDescription="@string/gallery_button_description"
++                    android:scaleType="centerCrop"
++                    android:visibility="gone" />
++
++            </FrameLayout>
++
++        </androidx.cardview.widget.CardView>
++
++        <ImageButton
++            android:id="@+id/flipCameraButton"
++            android:layout_width="60dp"
++            android:layout_height="60dp"
++            android:background="@null"
++            android:contentDescription="@string/flip_camera_button_description"
++            android:scaleType="center"
++            android:src="@drawable/ic_flip_camera"
++            app:layout_constraintBottom_toBottomOf="parent"
++            app:layout_constraintEnd_toEndOf="parent"
++            app:layout_constraintStart_toStartOf="parent"
++            app:layout_constraintTop_toBottomOf="@+id/shutterButton" />
++
++        <ImageButton
++            android:id="@+id/videoRecordingStateButton"
++            android:layout_width="32dp"
++            android:layout_height="32dp"
++            android:background="@null"
++            android:contentDescription="@string/video_recording_state_button_description"
++            android:src="@drawable/avd_video_recording_pause"
++            android:visibility="gone"
++            app:layout_constraintBottom_toBottomOf="@+id/flipCameraButton"
++            app:layout_constraintEnd_toEndOf="@+id/flipCameraButton"
++            app:layout_constraintStart_toStartOf="@+id/flipCameraButton"
++            app:layout_constraintTop_toTopOf="@+id/flipCameraButton" />
++    </androidx.constraintlayout.widget.ConstraintLayout>
++
++    <!-- Bottom of the sidebar: secondary controls, stacked vertically. -->
++    <androidx.constraintlayout.widget.ConstraintLayout
++        android:id="@+id/secondaryBottomBarLayout"
++        android:layout_width="0dp"
++        android:layout_height="wrap_content"
++        android:layout_marginBottom="24dp"
++        app:layout_constraintBottom_toBottomOf="parent"
++        app:layout_constraintEnd_toEndOf="parent"
++        app:layout_constraintStart_toStartOf="@+id/controlPanelGuideline">
++
++        <ImageButton
++            android:id="@+id/proButton"
++            style="@style/Theme.Aperture.Camera.SecondaryBottomBarButton"
++            android:contentDescription="@string/pro_button_description"
++            android:scaleType="fitXY"
++            app:layout_constraintEnd_toEndOf="parent"
++            app:layout_constraintStart_toStartOf="parent"
++            app:layout_constraintTop_toTopOf="parent"
++            app:srcCompat="@drawable/ic_pro_button" />
++
++        <ImageButton
++            android:id="@+id/googleLensButton"
++            style="@style/Theme.Aperture.Camera.SecondaryBottomBarButton"
++            android:contentDescription="@string/google_lens_button_description"
++            android:src="@drawable/ic_google_lens"
++            android:visibility="gone"
++            app:layout_constraintEnd_toEndOf="parent"
++            app:layout_constraintStart_toStartOf="parent"
++            app:layout_constraintTop_toTopOf="parent"
++            app:tint="@android:color/white" />
++
++        <org.lineageos.aperture.ui.views.LensSelectorLayout
++            android:id="@+id/lensSelectorLayout"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:layout_marginTop="24dp"
++            android:layout_marginBottom="24dp"
++            android:orientation="vertical"
++            app:layout_constraintBottom_toTopOf="@+id/flashButton"
++            app:layout_constraintEnd_toEndOf="parent"
++            app:layout_constraintStart_toStartOf="parent"
++            app:layout_constraintTop_toBottomOf="@+id/proButton" />
++
++        <ImageButton
++            android:id="@+id/flashButton"
++            style="@style/Theme.Aperture.Camera.SecondaryBottomBarButton"
++            android:contentDescription="@string/flash_button_description"
++            app:layout_constraintBottom_toBottomOf="parent"
++            app:layout_constraintEnd_toEndOf="parent"
++            app:layout_constraintStart_toStartOf="parent"
++            app:srcCompat="@drawable/ic_flash_off" />
++    </androidx.constraintlayout.widget.ConstraintLayout>
++
++    <androidx.camera.view.ScreenFlashView
++        android:id="@+id/screenFlashView"
++        android:layout_width="0dp"
++        android:layout_height="0dp"
++        app:layout_constraintBottom_toBottomOf="parent"
++        app:layout_constraintEnd_toEndOf="parent"
++        app:layout_constraintStart_toStartOf="parent"
++        app:layout_constraintTop_toTopOf="parent" />
++
++    <include
++        android:id="@+id/capturePreviewLayout"
++        layout="@layout/capture_preview_layout"
++        android:visibility="gone"
++        app:layout_constraintBottom_toBottomOf="parent"
++        app:layout_constraintEnd_toEndOf="parent"
++        app:layout_constraintStart_toStartOf="parent"
++        app:layout_constraintTop_toTopOf="parent" />
++</androidx.constraintlayout.widget.ConstraintLayout>
+diff --git a/app/src/main/res/values/attrs.xml b/app/src/main/res/values/attrs.xml
+index c68eb07..c1f9fad 100644
+--- a/app/src/main/res/values/attrs.xml
++++ b/app/src/main/res/values/attrs.xml
+@@ -15,4 +15,7 @@
+         <attr name="thumbTextColor" format="color" />
+         <attr name="thumbTextSize" format="dimension" />
+     </declare-styleable>
++    <declare-styleable name="CameraModeSelectorLayout">
++        <attr name="android:orientation" />
++    </declare-styleable>
+ </resources>
