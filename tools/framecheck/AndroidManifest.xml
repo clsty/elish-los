@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Exists only to give this device a real *orientation-sensor client*, so the
+     self-consistency check in docs/orientation.md can be run against what
+     the framework actually hands to an app. Draws nothing (the window is the default
+     theme background), requests no permission, uses no network. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.framecheck">
+
+    <application android:label="FrameCheck">
+        <activity
+            android:name=".FrameCheck"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
