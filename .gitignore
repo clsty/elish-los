@@ -1,0 +1,4 @@
+# build output of tools/framecheck (a throwaway debug keystore lives in there too)
+tools/framecheck/build/
+__pycache__/
+*.pyc

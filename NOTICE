@@ -1,0 +1,95 @@
+NOTICE — third-party material, licenses, and what is deliberately not redistributed
+====================================================================================
+
+Every change in this repository is a difference from somebody else's code. This file says
+whose, under what license, and which inputs a reader has to fetch themselves.
+
+
+1. Patch files, by origin
+-------------------------
+
+patches/generated/kernel-xiaomi-sm8250-ksu-susfs.patch
+    Kernel changes: the KernelSU hook integration points in the 4.19 kernel (kernel/sys.c,
+    fs/exec.c, fs/open.c, fs/stat.c, kernel/reboot.c, drivers/input/input.c), the SuSFS
+    implementation (fs/susfs.c, include/linux/susfs.h, include/linux/susfs_def.h), the
+    build wiring, and arch/arm64/configs/vendor/xiaomi/ksu-susfs.config.
+    Derived from the Linux kernel 4.19 (GPL-2.0-only) and from SuSFS. The SuSFS files here
+    are the in-kernel implementation of SuSFS v2.2.0 (`SUSFS_VERSION` in
+    include/linux/susfs_def.h) as carried by the device kernel branch that our integration
+    patch came from; that patch credits simonpunk as co-author and points at
+    https://github.com/JackA1ltman/NonGKI_Kernel_Build_2nd as the port it followed.
+    GPL-2.0-only. Our own lines are licensed so as to keep the result distributable under
+    GPL-2.0-only, as the kernel requires. sidex15's repository
+    (https://github.com/sidex15/susfs4ksu-module) is the user-space KernelSU module that
+    drives this kernel support; it is not the source of the files in this patch.
+
+patches/generated/kernelsu-preinstalled-manager.patch
+    A two-file change (kernel/manager/apk_sign.c, kernel/manager/throne_tracker.c) inside
+    the BakaSU repository, which published as ReSukiSU at the release this patch was made
+    against: it teaches the manager scanner to recognize a manager
+    preinstalled in /product/app, and makes the APK-path package parser tolerate a package
+    name without a hyphen.
+    Derived from BakaSU (https://github.com/Baka-SU/BakaSU), a KernelSU fork; it was published
+    as ReSukiSU at v4.2.0-rc1, the release this patch is pinned to. The repository carries a
+    GNU GPL v3 LICENSE at its root and a separate GNU GPL v2
+    LICENSE inside its `kernel/` directory; both files this patch modifies sit under the
+    latter and carry no SPDX header of their own. Treat this patch as GPL-2.0-only and
+    consult upstream for the authoritative terms.
+
+patches/generated/frameworks-native-device-frame-transform.patch
+patches/generated/frameworks-av-sensor-orientation.patch
+    Derived from the Android Open Source Project (frameworks/native, frameworks/av),
+    Apache License 2.0.
+
+patches/generated/device-xiaomi-elish.patch
+    Derived from the LineageOS device tree for this device (device/xiaomi/elish),
+    Apache License 2.0. Its parts are documented in docs/orientation.md, docs/network.md
+    and docs/root.md.
+
+patches/generated/aperture-landscape-sidebar.patch
+    Derived from LineageOS Aperture (packages/apps/Aperture), Apache License 2.0. The patch
+    also adds files with no upstream counterpart (a resource file, a class, an overlay); they
+    carry the upstream Apache-2.0 header because keeping one licence across a derived
+    component is the simpler obligation, and MIT and Apache-2.0 are compatible in this
+    direction.
+
+patches/files/
+    Files with no upstream counterpart, written for this device: ksu-install.rc,
+    config.fs (the AOSP fs_config file format, our content), idc/*.idc, and
+    compat_framework_overrides.xml. MIT, as is everything else original here.
+
+
+2. Inputs a reader must obtain (not redistributable here)
+--------------------------------------------------------
+
+Base firmware   HyperOS 1.0.2.0.TKYCNXM fastboot package (CN firmware line). Provides the
+                firmware and partition baseline the ROM is flashed onto.
+GApps           MindTheGapps for Android 17 (17.0.0 in the setup documented here).
+ReSukiSU        The kernel userspace and manager source, cloned by
+                patches/apply-root-changes.sh at a pinned commit and tag. It is a git
+                repository with full history because its Kbuild derives the kernel version
+                code from `git rev-list --count`; a copy of its files will not do.
+Manager APK     A KernelSU/ReSukiSU manager APK of the matching release. `ksud` is
+                extracted from it (lib/arm64-v8a/libksud.so), which is what keeps the
+                delivered userspace and a manager of that release the same release. The
+                APK is a build input only: nothing here installs it. See docs/root.md for
+                why shipping a manager would be a privacy cost rather than a convenience.
+susfs4ksu       The KernelSU module that carries the root-hiding *policy* (which cmdline
+module          parameter to spoof, which path to hide):
+                https://github.com/sidex15/susfs4ksu-module, release `v1.5.2+_R28`, asset
+                `ksu_module_susfs_1.5.2+.zip` (the module reports `version v1.5.2-R28`,
+                `versionCode 105002028`). The module's own `update.json` names the same
+                repository `ksu_module_susfs`, an address that redirects; use the one above.
+                The kernel build carries SuSFS itself; this module is what makes
+                `verifiedbootstate=green` appear, and it is installed on device, not shipped
+                in the image. See docs/root.md.
+Prebuilt        The AOSP prebuilts used by tools/framecheck/build.sh (a JDK, aapt2, d8,
+toolchain       apksigner, android.jar) come from the tree the ROM is built in; they are
+                not part of this repository.
+
+
+3. Trademarks and device names
+------------------------------
+
+Xiaomi, HyperOS, MIUI and Google are trademarks of their respective owners. `elish` is
+Xiaomi's codename for the Pad 5 Pro; `kona` is the SM8250 platform codename.
