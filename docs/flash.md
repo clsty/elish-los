@@ -58,6 +58,12 @@ the vendor side overwrites), `ro.lineage.version`, and `uname -r`.
 
 ## 2. Route A: from the stock firmware (wipes everything)
 
+Scope, stated once: every rule inside these steps is measured, but **the whole route has not been
+walked end to end from a stock device** - the builds this project grew up on were installed onto a
+tablet that already ran LineageOS. So the order is derived (the firmware package owns the partition
+and firmware baseline, `vendor_boot` owns the recovery, the payload owns the rest), and the first
+person to walk it should expect to report what differs.
+
 1. Flash the `HyperOS 1.0.2.0.TKYCNXM` fastboot package (CN firmware line). This re-partitions
    and clears all data and cannot be undone by flashing a ROM. Unpack the `.tgz` first; the
    directory it contains is what the next step needs, and `flash_all.sh` inside it must be run
@@ -115,7 +121,20 @@ the vendor side overwrites), `ro.lineage.version`, and `uname -r`.
    firmware and partition baseline and takes effect as soon as it is written. Keep it as a
    fallback argument: if LineageOS fails to boot, booting the freshly-flashed firmware
    successfully is what proves the problem is on the ROM side.
-4. Reboot to recovery, `Wipe → Format data/factory reset` (type yes), `Advanced → Enable ADB`,
+
+4. **Flash `boot` and `vendor_boot` into both slots - this is what gives you a recovery to install
+   with.** This build has no `recovery.img`: the LineageOS recovery lives inside `vendor_boot`
+   (`BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT := true` in
+   `device/xiaomi/sm8250-common/BoardConfigCommon.mk`). Until those two are written the tablet
+   still has the firmware package's own recovery, and step 5 then has nothing to enter. Both files
+   are published next to the ROM zip; here, flashing both slots is the point rather than a
+   precaution.
+
+   ```sh
+   for s in a b; do fastboot flash boot_$s boot.img; fastboot flash vendor_boot_$s vendor_boot.img; done
+   ```
+
+5. Reboot to recovery, `Wipe → Format data/factory reset` (type yes), `Advanced → Enable ADB`,
    `Apply update → Apply from ADB`, sideload the ROM, then **in the same session** sideload
    GApps - the only hard condition is not to boot the system before GApps are in - then
    `Reboot system now`.
