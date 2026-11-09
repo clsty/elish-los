@@ -174,13 +174,26 @@ hiding**. Three of the readings people check for hiding come from things outside
   compares each candidate against a built-in list of signing keys, and this build carries six of
   them (`CONFIG_KSU_MULTI_MANAGER_SUPPORT=y` in
   `arch/arm64/configs/vendor/xiaomi/ksu-susfs.config`). A manager signed with a key outside that
-  list needs one extra command, once per install: `ksud kernel dynamic-manager set-apk`
-  `<base.apk>`, which registers it in a reserved slot. It needs a root shell (it writes
-  `/data/adb/ksu/.dynamic_manager`), and it takes the **installed** path, which `pm path <pkg>`
-  prints - the kernel only accepts a file named `base.apk`. Whether a manager signed with one of
+  list needs one extra command, once per install, run **on the tablet as root**:
+
+  ```sh
+  MANAGER_PKG=com.example.manager        # the package name of the manager you installed
+  APK=$(adb shell pm path "$MANAGER_PKG" | grep -m1 base.apk | cut -d: -f2- | tr -d '\r')
+  adb shell su -c "/data/adb/ksud kernel dynamic-manager set-apk $APK"
+  ```
+
+  The assignment is not decoration: `pm path` prefixes each line with `package:`, a split APK lists
+  several files, and `adb shell` appends `\r`. The kernel accepts only a file named `base.apk`.
+  Three parts of that line are each load-bearing. The path is absolute because neither copy of
+  `ksud` is in a shell's `PATH`. `su -c` is required, not optional: the command reads the APK's
+  signing certificate, hashes it and hands it to the kernel over an ioctl the driver admits only to
+  uid 0 (`only_root` in `kernel/manager/../../supercall/perm.c`; the dispatch table registers
+  `KSU_IOCTL_DYNAMIC_MANAGER` with `.perm_check = only_root`). And `su` only answers once a manager
+  is installed **and** the shell has been granted root in that manager's UI - so this command cannot
+  precede the manager, which is the order the install steps give it. Whether a manager signed with one of
   the six needs it as well is not measured on this device, so judge recognition by the reading
   (`dmesg | grep -i crowning`), not by whether the command was run.
-- Both live under `/data` (`/data/adb/modules`, `/data/adb/ksu/dynamic_manager.txt`), so a
+- Both live under `/data` (`/data/adb/modules`, `/data/adb/ksu/.dynamic_manager`), so a
   **factory reset or Format data removes them** and the readings go back to what a ROM-only
   device shows. Nothing in the image is wrong at that point; the setup simply has to be
   repeated.

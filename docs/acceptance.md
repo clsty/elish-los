@@ -190,8 +190,8 @@ adb shell '/data/adb/ksud module list'                                     # you
 Root hiding. **These next five lines assume two things the ROM does not provide**: the
 susfs4ksu KernelSU module is installed, and a manager the kernel recognizes is installed - which
 for a manager signed with a key outside the kernel's built-in list means registering it once with
-`ksud kernel dynamic-manager set-apk <base.apk>` ([root.md](root.md) has the rule and the
-prerequisites). On a device that has the ROM only, or after a factory reset, expect `orange` and
+`/data/adb/ksud kernel dynamic-manager set-apk <base.apk>`, run as root ([root.md](root.md) has the
+rule, the command and why `su` is a prerequisite rather than a formality). On a device that has the ROM only, or after a factory reset, expect `orange` and
 no dynamic-manager line, and treat that as the precondition missing rather than as a failure.
 
 ```sh
