@@ -184,6 +184,21 @@ hiding**. Three of the readings people check for hiding come from things outside
 
   The assignment is not decoration: `pm path` prefixes each line with `package:`, a split APK lists
   several files, and `adb shell` appends `\r`. The kernel accepts only a file named `base.apk`.
+
+  **This is not circular, but it is ordered.** `only_root()` reads `current_uid()`, not which domain
+  the caller is in, so on a `userdebug` build `adb root` is the other candidate for that first
+  registration - the one available before any manager exists, since `su` needs a manager to have
+  granted it. Whether the shell domain reaches the driver's ioctl is **not measured here**, and it is
+  the first thing to settle on a fresh install: `adb root; adb shell id` and then the command above.
+  If it answers `Permission denied` while `id` says uid 0, an SELinux denial is the reason
+  (`adb shell dmesg | grep avc`), and `su -c` is the path that works.
+
+  One asymmetry worth knowing, because it dissolves the apparent deadlock: **registration** reads a
+  signature off any file path (`apk_sign::get_apk_signature(&apk)` in `userspace/ksud/src/android/cli.rs`
+  never looks at `/data/app`), while the kernel's **scan** for a manager only accepts an installed
+  `base.apk`. So a copy pushed to `/data/local/tmp` can be registered first and installed afterwards -
+  the order the two steps go in is a free choice, and only the manager having to end up installed is
+  fixed.
   Three parts of that line are each load-bearing. The path is absolute because neither copy of
   `ksud` is in a shell's `PATH`. `su -c` is required, not optional: the command reads the APK's
   signing certificate, hashes it and hands it to the kernel over an ioctl the driver admits only to
