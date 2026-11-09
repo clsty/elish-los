@@ -144,19 +144,26 @@ for pkg in "$MANAGER_PKG" org.lineageos.aperture; do
 done
 ```
 
-Two host paths are used below and are not the same thing: `$OUT` is the build's output
-directory (`out/target/product/elish` under the tree), `$ZIP` is the dated ROM zip taken as
-above. Both must be absolute.
+`$ZIP` is the dated ROM zip - from your own build or from this project's release page. `$OUT`
+is a build's output directory (`out/target/product/elish` under the tree) and appears in the one
+**optional** command below, so a reader who downloaded the build needs neither the tree nor this
+variable. Both must be absolute when used: `adb` stats its argument on the host, so a relative
+path is an `rc=1` no-op.
 
 ```sh
-OUT=/path/to/los24/out/target/product/elish
-ZIP=$OUT/lineage-24.0-20260101-UNOFFICIAL-elish.zip      # the dated name, not lineage_elish-ota.zip
+ZIP=/path/to/lineage-24.0-20260101-UNOFFICIAL-elish.zip  # the dated name, not lineage_elish-ota.zip
+OUT=/path/to/los24/out/target/product/elish              # optional step only
 ```
 
-**Flash `boot` and `vendor_boot` into *both* slots - and only when the kernel changed.** The
-reason is measured rather than theoretical: `boot` was once flashed into `_a`, and the device
-then booted `_b`, because a ROM sideload writes its own target slot. Giving both slots the same
-`boot` removes the guesswork.
+**Optional, and only when the kernel changed: give *both* slots the same `boot` and
+`vendor_boot`.** The package carries both by itself - this build's payload writes `boot`,
+`vendor_boot`, `dtbo`, `vbmeta`, `vbmeta_system`, `odm`, `product`, `system`, `system_ext` and
+`vendor`, which is `AB_OTA_PARTITIONS` in `device/xiaomi/sm8250-common/BoardConfigCommon.mk` - but
+into the slot it installs to, not the other one. So after a sideload the slot you boot has the
+matching kernel, while the slot you did not boot keeps the kernel it had. That asymmetry is
+measured rather than theoretical: `boot` was once flashed into `_a` and the device then booted
+`_b`. Aligning the two slots removes the guesswork; the two images are in `$OUT` if you built, and
+are published next to the zip if you did not.
 
 ```sh
 adb reboot bootloader; sleep 8
