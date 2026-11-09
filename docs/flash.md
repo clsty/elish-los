@@ -63,6 +63,15 @@ the vendor side overwrites), `ro.lineage.version`, and `uname -r`.
    directory it contains is what the next step needs, and `flash_all.sh` inside it must be run
    from that directory because its image paths are relative to it.
 
+   The file this document was written against is
+   `elish_images_OS1.0.2.0.TKYCNXM_20240507.0000.00_13.0_cn_f8476ce7cc.tgz`, 5.4 GB, MD5
+   `f8476ce7cc2f9a87276bb62398903b2f`. Xiaomi's own links expire, so verify whatever copy you end
+   up using against those two values - and the name carries a shortcut: **its last ten hex
+   characters are the first ten of the file's MD5**, so a filename alone already says whether a
+   download is the right one. [miuidownloader](https://miuidownloader.com/hyperos/elish/stable/os1-0-2-0-tkycnxm)
+   is named here because it publishes both values for this version; other firmware indexes list
+   the same version with neither, so they cannot be checked by name alone.
+
    Run the package's own list rather than `flash_all.sh` itself, for two measured reasons: it
    checks the product with `getvar` exactly once, and this ABL often does not answer the first
    command (rule 2), so the script exits by itself with `Missmatching image and device`; and it
