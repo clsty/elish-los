@@ -186,10 +186,11 @@ adb shell '/data/adb/ksud module list'                                     # you
 ```
 
 Root hiding. **These next five lines assume two things the ROM does not provide**: the
-susfs4ksu KernelSU module is installed, and the manager has been registered once with `ksud
-kernel dynamic-manager set-apk <base.apk>` (see [root.md](root.md)). On a device that has the
-ROM only, or after a factory reset, expect `orange` and no dynamic-manager line, and treat
-that as the precondition missing rather than as a failure.
+susfs4ksu KernelSU module is installed, and a manager the kernel recognizes is installed - which
+for a manager signed with a key outside the kernel's built-in list means registering it once with
+`ksud kernel dynamic-manager set-apk <base.apk>` ([root.md](root.md) has the rule and the
+prerequisites). On a device that has the ROM only, or after a factory reset, expect `orange` and
+no dynamic-manager line, and treat that as the precondition missing rather than as a failure.
 
 ```sh
 adb shell 'cat /proc/cmdline' | grep -o 'verifiedbootstate=[a-z]*'   # green
@@ -202,7 +203,8 @@ adb shell 'dmesg | grep -i "dynamic manager" | tail -1'               # injectio
 With no manager installed there is nothing to crown, so the crowning line is *absent*, which is
 the expected reading for that state; the two rows above it are still judgements, and they
 should still pass. `signature_index=255` in a crowning line is the reserved slot for a dynamic
-manager, so seeing it means `set-apk` did its job.
+manager, so seeing it means `set-apk` did its job; a smaller index means one of the kernel's own
+signing keys matched and nothing had to be registered.
 
 Both `dmesg` greps here and in the block above are time-sensitive: the kernel ring buffer
 forgets, so hours into a boot they read empty while everything is working. On an aged boot,
@@ -276,7 +278,7 @@ project introduces are a real finding; the existing noise is not.
 | framecheck exit 3 with a small tilt | correct verdict for a flat pose: pipeline OK, side/sign untested |
 | `user_rotation` not matching the app's direction | the system synchronizes it while an app forces a direction |
 | `dmesg | grep -c …` for the three stages returns 0 hours after boot | the kernel ring buffer has wrapped; judge by the seeding result |
-| `orange` and no dynamic-manager line on a ROM-only device | the susfs4ksu module and `set-apk` are not installed; see section 6 |
+| `orange` and no dynamic-manager line on a ROM-only device | the susfs4ksu module is not installed; and a manager that matched one of the kernel's own keys adds no dynamic-manager line at all - judge it by the crowning line |
 
 ## 11. Not covered here
 

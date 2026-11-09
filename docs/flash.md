@@ -185,6 +185,11 @@ human at the device: when the GApps transfer finishes, the Google apps licence p
 the only point in the whole flow where someone has to be next to the tablet. Then
 `Reboot system now`.
 
+**After first boot: install a manager.** The image delivers `ksud` and no manager APK, so root has
+no interface until you do. Which APK matches this kernel, its pinned hash and the install command
+are in [root.md](root.md); section 6 of [acceptance.md](acceptance.md) is the reading that tells
+"ROM only" apart from "root set up".
+
 ## 4. Two regularities this device obeys
 
 1. **A ROM-only sideload lands on the other slot.** Four consecutive observations of `_b`→`_a`→

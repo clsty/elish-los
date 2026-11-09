@@ -104,8 +104,20 @@ package name and signing key of your own, and that name is the thing root-hiding
 Baking it into a public image publishes it for everyone who downloads the ROM, and a manager
 with the upstream package name is trivially recognizable.
 
-So: install a manager of the matching release yourself. The kernel finds it in `/data/app`
-by scanning APK paths - the path is parsed for the package name (the second-to-last path
+So: install a manager of the matching release yourself - in practice `versionCode 35061`, the
+release asset `ReSukiSU_v4.2.0-rc1_35061-arm64-v8a-release.apk` (SHA-256
+`544cf6cb105acacf219b3db71e43b9818e3f335153763e56aa0356bd09d1b450`), which is the APK
+`patches/apply-root-changes.sh` pins and takes `ksud` from, so the delivered userspace and that
+manager are the same release by construction. A manager built with a signing key of your own works
+too, and that is the form root hiding wants - read the recognition rule below before concluding
+that root is broken because its screen does not appear.
+
+```sh
+adb install -r ReSukiSU_v4.2.0-rc1_35061-arm64-v8a-release.apk
+adb shell 'dmesg | grep -i crowning'        # one Crowning manager line = the kernel found it
+```
+
+The kernel finds the manager in `/data/app` by scanning APK paths - the path is parsed for the package name (the second-to-last path
 segment) and the file must be named `base.apk`, which is why the *optional* preinstall form
 below has constraints that look arbitrary.
 
@@ -145,15 +157,25 @@ hiding**. Three of the readings people check for hiding come from things outside
   ([sidex15/susfs4ksu-module](https://github.com/sidex15/susfs4ksu-module)), which rewrites the
   cmdline parameters (`spoof_cmdline=1`) and the matching properties. The kernel build carries SuSFS itself, but
   the policy - which path to hide, which parameter to spoof - lives in that module.
-- **The manager being recognized** additionally needs one command, run once per install:
-  `ksud kernel dynamic-manager set-apk <base.apk>`. Without it the manager is a normal app.
+- **The manager being recognized** is a signature check, not a package-name check: the kernel
+  compares each candidate against a built-in list of signing keys, and this build carries six of
+  them (`CONFIG_KSU_MULTI_MANAGER_SUPPORT=y` in
+  `arch/arm64/configs/vendor/xiaomi/ksu-susfs.config`). A manager signed with a key outside that
+  list needs one extra command, once per install: `ksud kernel dynamic-manager set-apk`
+  `<base.apk>`, which registers it in a reserved slot. It needs a root shell (it writes
+  `/data/adb/ksu/.dynamic_manager`), and it takes the **installed** path, which `pm path <pkg>`
+  prints - the kernel only accepts a file named `base.apk`. Whether a manager signed with one of
+  the six needs it as well is not measured on this device, so judge recognition by the reading
+  (`dmesg | grep -i crowning`), not by whether the command was run.
 - Both live under `/data` (`/data/adb/modules`, `/data/adb/ksu/dynamic_manager.txt`), so a
   **factory reset or Format data removes them** and the readings go back to what a ROM-only
   device shows. Nothing in the image is wrong at that point; the setup simply has to be
   repeated.
 
-So: after flashing the ROM alone, expect `orange` and no dynamic manager. After installing the
-module and setting the dynamic manager, expect `green` on both channels.
+So: after flashing the ROM alone, expect `orange` and no crowning line. The two things under
+`/data` account for the rest separately: the module brings the two `green` readings, and
+registration brings the dynamic-manager line - which a manager whose key is already in the
+kernel's list does not need.
 
 ### Reading each mechanism
 
@@ -161,11 +183,11 @@ module and setting the dynamic manager, expect `green` on both channels.
 | --- | --- | --- |
 | Locked-state indication | the `susfs4ksu` module | `verifiedbootstate=green` **both** in `/proc/cmdline` **and** in `getprop ro.boot.verifiedbootstate`; `ro.boot.flash.locked=1`, `ro.boot.veritymode=enforcing` |
 | SuSFS mount hiding | kernel SuSFS + that module | the module listed enabled by `/data/adb/ksud module list`; `ksu_susfs` present in `/data/adb/ksu/bin` |
-| Manager recognition | the manager APK, plus `set-apk` | `dmesg | grep -i crowning` shows exactly one `Crowning manager: <pkg> uid=… signature_index=255`, and `SYS_SECCOMP, syscall 142` count is 0 (a manager that was not crowned dies on `reboot(2)`) |
+| Manager recognition | the manager APK; `set-apk` if its signing key is not one of the kernel's six | `dmesg | grep -i crowning` shows exactly one `Crowning manager: <pkg>` line, and `SYS_SECCOMP, syscall 142` count is 0 (a manager that was not crowned dies on `reboot(2)`) |
 
-`signature_index=255` is the reserved slot for a dynamic manager: ReSukiSU keeps index 255 for
-a manager registered through `set-apk`, and its own key takes one of the 254 general slots
-(`kernel/manager/apk_sign.c`). Seeing it means the registration worked.
+The index in that line says which of the two paths registered it: 255 is the reserved slot for a
+manager added through `set-apk`, while a key in the built-in list takes one of the 254 general
+slots (`kernel/manager/apk_sign.c`).
 
 With no manager installed at all, the first two rows still hold and there is nothing to crown
 - the crowning line is absent, and that is the expected reading rather than a failure.
