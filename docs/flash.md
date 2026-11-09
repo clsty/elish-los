@@ -209,7 +209,8 @@ MindTheGapps installs into `system/`, which the payload rewrites wholesale. One 
 human at the device: when the GApps transfer finishes, the Google apps licence page appears and
 `Accept` must be pressed (wake the screen with a short power-key press if it went dark). That is
 the only point in the whole flow where someone has to be next to the tablet. Then
-`Reboot system now`.
+`Reboot system now`. The GApps package this ROM was tested with - file name, hash and release page -
+is the row marked GApps in [build.md](build.md).
 
 **After first boot: install a manager.** The image delivers `ksud` and no manager APK, so root has
 no interface until you do. Which APK matches this kernel, its pinned hash and the install command

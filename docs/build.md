@@ -53,9 +53,15 @@ build scripts do, and they stop on a mismatch rather than building something unv
 
 | Input | Where it comes from | sha256 |
 | --- | --- | --- |
-| Manager APK (source of the delivered `ksud`) | `Baka-SU/BakaSU`, release `v4.2.0-rc1`, asset `ReSukiSU_v4.2.0-rc1_35061-arm64-v8a-release.apk` | `544cf6cb105acacf219b3db71e43b9818e3f335153763e56aa0356bd09d1b450` |
-| susfs4ksu module (the hiding policy, installed on-device) | `sidex15/susfs4ksu-module`, release `v1.5.2+_R28`, asset `ksu_module_susfs_1.5.2+.zip` | `abcd6bf456ea8189298d9e496faa440201d90e4f0bd93b83c0527589001c9376` |
-| GApps (flashed with the ROM, see flash.md) | MindTheGapps `17.0.0-arm64`, release `MindTheGapps-17.0.0-arm64-20261022_132445`, 544284463 bytes | `a6844eeb2613541558237e467b20feb01f8b45b2ebab0109834140ea59b6ca4d` |
+| Manager APK (source of the delivered `ksud`) | [Baka-SU/BakaSU `v4.2.0-rc1`](https://github.com/Baka-SU/BakaSU/releases/tag/v4.2.0-rc1), asset `ReSukiSU_v4.2.0-rc1_35061-arm64-v8a-release.apk` | `544cf6cb105acacf219b3db71e43b9818e3f335153763e56aa0356bd09d1b450` |
+| susfs4ksu module (the hiding policy, installed on-device) | [sidex15/susfs4ksu-module `v1.5.2+_R28`](https://github.com/sidex15/susfs4ksu-module/releases/tag/v1.5.2%2B_R28), asset `ksu_module_susfs_1.5.2+.zip` | `abcd6bf456ea8189298d9e496faa440201d90e4f0bd93b83c0527589001c9376` |
+| GApps (flashed with the ROM, see flash.md) | [MindTheGapps `17.0.0-arm64`, release `MindTheGapps-17.0.0-arm64-20261022_132445`](https://github.com/MindTheGapps/17.0.0-arm64/releases/tag/MindTheGapps-17.0.0-arm64-20261022_132445), 544284463 bytes | `a6844eeb2613541558237e467b20feb01f8b45b2ebab0109834140ea59b6ca4d` |
+
+Each link is the release page rather than the file link on purpose: a GitHub asset URL answers
+302 into a signed CDN URL whose query string expires, so it is not something to pin in a document.
+Check the download by the asset name and the sha256 above (the GApps release also ships its own
+`.zip.sha256sum` beside the file). Verified reachable on 2026-11-09; a stale link is reported by
+`tools/check-repo.sh`, which fails on a redirect as well as on a 404.
 
 The manager APK is only a container: what the image ships is its `lib/arm64-v8a/libksud.so`
 (`fb049cdcd2ffac43c43d6e1a52bfae5f0c5328f94c1398e977159020c026d85d`), so **any** manager APK of
