@@ -8,7 +8,9 @@ One convention worth knowing before you run anything: a command that greps for a
 string exits **1** when the string is absent, which is a pass criterion here, not a script
 failure. `grep -c` prints `0` and also exits 1. The few blocks that are not bare `adb` need a
 host with `python3`, `pillow`, `ffmpeg`, `numpy` and `scipy` (the sensor check in section 3 and
-the mask detector in section 5).
+the mask detector in section 5). Section 3 asks for one more thing: `tools/framecheck` is built
+from the prebuilts inside a LineageOS tree, so if you downloaded this ROM without building it, use
+the `dumpsys sensorservice` reading section 4 gives for the same poses instead.
 
 Read the last section too: several readings on this device are **not judgements** under
 certain conditions, and mistaking one for a failure has cost more time than any real bug.
