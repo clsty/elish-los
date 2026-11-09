@@ -218,6 +218,21 @@ So: after flashing the ROM alone, expect `orange` and no crowning line. The two 
 registration brings the dynamic-manager line - which a manager whose key is already in the
 kernel's list does not need.
 
+### What this does not claim
+
+The hiding above has a nameable edge: it covers the kernel command line, the properties that mirror
+them, and the mount view. Two nearby things are **not** covered and have not been measured on this
+device, so nothing here should be read as claiming them:
+
+- **KeyStore attestation.** An app can also ask the hardware for a signed certificate, and that
+  certificate carries its own boot-state fields. It is a different channel from the two
+  `verifiedbootstate` readings, and a different trust anchor - the TEE's key, not anything in this
+  image - so a build with the right package name and the wrong attestation is still detectable.
+  Whether this device answers such a query at all is unknown here.
+- **Any specific detection app's verdict.** The readings in the table below are the ones this project
+  can produce with `adb`. An app's own pass or fail depends on which of those channels it consults
+  and on what else it looks at, and this project has not surveyed apps.
+
 ### Reading each mechanism
 
 | Mechanism | Where it comes from | Reading that proves it ran |

@@ -290,5 +290,6 @@ describes, each with its reason:
 | Item | Why it is not judged here |
 | --- | --- |
 | `su` granting | needs a manager, and the default form installs none; installing one changes its uid, so the grant has to be made in the app first. The `sucompat` path *is* covered: the three stages, the seeding, and the absence of `syscall 142` failures |
+| KeyStore attestation | not measured. It is a separate channel from `verifiedbootstate`: a TEE-signed certificate carrying its own boot-state fields, anchored on hardware rather than on anything in this image. Section 6 judges the channels `adb` can reach; a verdict about attestation would need a client and a reference point, neither of which exists here yet ([root.md](root.md), "What this does not claim") |
 | Captive portal 204 and NTP | no wireless network was configured on the test device, so the precondition was unmet |
 | Power-state timings, Bluetooth, deep-power-down and reboot timing (the `A*` items of route A in [flash.md](flash.md)) | only meaningful after a change to `boot` / `vendor_boot`; this iteration changed neither |
