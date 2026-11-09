@@ -105,7 +105,7 @@ Baking it into a public image publishes it for everyone who downloads the ROM, a
 with the upstream package name is trivially recognizable.
 
 So: install a manager of the matching release yourself - in practice `versionCode 35061`, the
-release asset `ReSukiSU_v4.2.0-rc1_35061-arm64-v8a-release.apk` (SHA-256
+release asset [ReSukiSU_v4.2.0-rc1_35061-arm64-v8a-release.apk](https://github.com/Baka-SU/BakaSU/releases/tag/v4.2.0-rc1) (SHA-256
 `544cf6cb105acacf219b3db71e43b9818e3f335153763e56aa0356bd09d1b450`), which is the APK
 `patches/apply-root-changes.sh` pins and takes `ksud` from, so the delivered userspace and that
 manager are the same release by construction. A manager built with a signing key of your own works
@@ -116,6 +116,19 @@ that root is broken because its screen does not appear.
 adb install -r ReSukiSU_v4.2.0-rc1_35061-arm64-v8a-release.apk
 adb shell 'dmesg | grep -i crowning'        # one Crowning manager line = the kernel found it
 ```
+
+Which manager to install is a real choice, and the two answers are not equivalent:
+
+- **The upstream APK** (the asset above) keeps the upstream package name. The module still hides
+  the mount and cmdline side, but a detecting app can also just look for that name - and the name
+  is the one thing the image cannot change for you. Root itself works the same. Such an APK is
+  signed with a key the kernel carries built in, so it is *expected* to be recognised without
+  registration - but that has not been measured on this device, so treat the crowning line below
+  as the question, not as a formality.
+- **A manager built with your own signing key and package name** is the form root hiding is about
+  (see the reason nothing is preinstalled above). It is not in the kernel's key list, so it
+  needs the one-time `set-apk` registration described under "Root hiding" - measured on this
+  device, where it was crowned in the reserved slot.
 
 The kernel finds the manager in `/data/app` by scanning APK paths - the path is parsed for the package name (the second-to-last path
 segment) and the file must be named `base.apk`, which is why the *optional* preinstall form
