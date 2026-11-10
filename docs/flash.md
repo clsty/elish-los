@@ -204,6 +204,13 @@ adb sideload MindTheGapps-17.0.0-arm64-*.zip
 completes, adbd restarts and `adb devices` shows `unauthorized`; `adb kill-server && adb
 start-server` fixes it without touching the screen.
 
+**Two `unauthorized` readings look identical and are not the same case.** The one just above follows a
+finished transfer, and a host-side restart clears it. The one met on *entering* recovery (measured
+2026-11-10) means the adb function is not enabled yet: host-side restarts change nothing, and **this
+recovery never shows an "allow USB debugging" prompt, in no state and under no circumstances** - so
+nothing will arrive on the screen however long you wait for it. The only way in is
+`Advanced → Enable ADB`, after which `adb devices` reads `sideload` directly.
+
 GApps are **not optional after a ROM-only flash**: the ROM payload is a full `super` image, and
 MindTheGapps installs into `system/`, which the payload rewrites wholesale. One moment needs a
 human at the device: when the GApps transfer finishes, the Google apps licence page appears and
