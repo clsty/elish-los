@@ -85,9 +85,9 @@ Read these three lines before installing:
 
 What has been verified on the device, and how, is the checklist in [`docs/acceptance.md`][acc].
 
-[dl-zip]: https://github.com/clsty/elish-los24/releases/download/24.0-20261109/lineage-24.0-20261109-UNOFFICIAL-elish.zip
-[dl-boot]: https://github.com/clsty/elish-los24/releases/download/24.0-20261109/boot.img
-[dl-vb]: https://github.com/clsty/elish-los24/releases/download/24.0-20261109/vendor_boot.img
+[dl-zip]: https://github.com/clsty/elish-los/releases/download/24.0-20261109/lineage-24.0-20261109-UNOFFICIAL-elish.zip
+[dl-boot]: https://github.com/clsty/elish-los/releases/download/24.0-20261109/boot.img
+[dl-vb]: https://github.com/clsty/elish-los/releases/download/24.0-20261109/vendor_boot.img
 [flash]: docs/flash.md
 [build]: docs/build.md
 [root]: docs/root.md
