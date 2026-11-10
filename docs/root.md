@@ -303,14 +303,20 @@ kernel's list does not need.
 ### What this does not claim
 
 The hiding above has a nameable edge: it covers the kernel command line, the properties that mirror
-them, and the mount view. Two nearby things are **not** covered and have not been measured on this
-device, so nothing here should be read as claiming them:
+them, and the mount view. Two nearby things sit outside it:
 
-- **KeyStore attestation.** An app can also ask the hardware for a signed certificate, and that
-  certificate carries its own boot-state fields. It is a different channel from the two
-  `verifiedbootstate` readings, and a different trust anchor - the TEE's key, not anything in this
-  image - so a build with the right package name and the wrong attestation is still detectable.
-  Whether this device answers such a query at all is unknown here.
+- **KeyStore attestation**, measured on this device now ([acceptance.md](acceptance.md) section 10).
+  An app asks for a signed certificate, and that certificate carries its own boot-state fields, so
+  rewriting properties does not reach it: with `spoof_cmdline=1` enabled and every reading an
+  unprivileged shell can take saying `green` / `1` / `enforcing`, the attestation still answered
+  `deviceLocked=False` and `verifiedBootState=UNVERIFIED`. Two qualifiers come from the same
+  structure and belong beside that result: the reported security level is `SOFTWARE`, and the
+  chain's root is self-signed, with no external issuer named anywhere in it. So this is a channel the
+  spoofing does not reach rather than a strong one - it proves that what it says is internally
+  consistent, not that a third party signed it. Who signs it matters: the answer comes from the
+  vendor's own Keymaster HAL, which neither this image nor the module produces, so nothing this
+  project adds can rewrite those fields - and equally, nothing this project ships can make them
+  verifiable to an outside party.
 - **Any specific detection app's verdict.** The readings in the table below are the ones this project
   can produce with `adb`. An app's own pass or fail depends on which of those channels it consults
   and on what else it looks at, and this project has not surveyed apps.
@@ -322,6 +328,7 @@ device, so nothing here should be read as claiming them:
 | Locked-state indication | the `susfs4ksu` module | `verifiedbootstate=green` **both** in `/proc/cmdline` **and** in `getprop ro.boot.verifiedbootstate`; `ro.boot.flash.locked=1`, `ro.boot.veritymode=enforcing`. The property half is the module's default; the cmdline half needs `spoof_cmdline=1` |
 | SuSFS mount hiding | kernel SuSFS + that module | the module listed enabled by `/data/adb/ksud module list`; `ksu_susfs` present in `/data/adb/ksu/bin` |
 | Manager recognition | the manager APK; `set-apk` if its signing key is not one of the kernel's six | `dmesg | grep -i crowning` shows exactly one `Crowning manager: <pkg>` line, and `SYS_SECCOMP, syscall 142` count is 0 (a manager that was not crowned dies on `reboot(2)`) |
+| Not hidden: KeyStore attestation | the vendor Keymaster HAL (`/vendor/bin/hw/android.hardware.keymaster@4.0-service-qti`, which holds `/dev/qseecom`), not this image | `python3 tools/attestcheck/check.py` reports `deviceLocked=False` and `verifiedBootState=UNVERIFIED` **while the first row reports `green`** - the two disagree on purpose, and that is the test of whether the first row's `green` is the module or the machine |
 
 The index in that line says which of the two paths registered it: 255 is the reserved slot for a
 manager added through `set-apk`, while a key in the built-in list takes one of the 254 general

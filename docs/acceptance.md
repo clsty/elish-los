@@ -323,7 +323,7 @@ endpoint). `dumpsys network_stack` also carries the probe itself, which is the s
 `PROBE_HTTP http://connect.rom.miui.com/generate_204 ... ret=204`.
 
 The last two need a working default route. Without one, `Network suggestion history: {Empty}` and
-`systemClockConfidence()=0` are **precondition unmet, not judgements** (section 10). With a
+`systemClockConfidence()=0` are **precondition unmet, not judgements** (section 11). With a
 connection, `ntp.aliyun.com` and `connect.rom.miui.com/generate_204` are the expected names. Run
 once with the system language set to English.
 
@@ -360,29 +360,93 @@ probe and 24 after, because `/data/adb` is `0700 root` and the permission check 
 before SELinux is consulted. That absence is the point: the `127` in section 6 has no avc line to
 find, so a search for one there is a dead end.
 
-## 10. Readings that are not judgements
+## 10. KeyStore attestation - the channel the spoofing does not reach
+
+Root hiding rewrites what processes can *read*. An attestation is different: the fields travel inside
+a signed structure, so rewriting properties does not touch them. That makes it worth its own
+judgement, and it is also why an app that checks root through attestation can still see what the
+properties no longer say.
+
+No tool on the device can produce one. `keystore_cli_v2` has no attestation command, its 22 brillo
+tests contain none, `generate` leaves the attestation fields out of `get-chars`, and `export` returns
+a self-signed 803-byte certificate - because asking for an attestation means
+`setAttestationChallenge()`, which is app-facing. So `tools/attestcheck/` is a 12 KB app that asks,
+plus a script that reads the answer back:
+
+```sh
+sh tools/attestcheck/build.sh && adb install -r tools/attestcheck/build/attestcheck.apk
+python3 tools/attestcheck/check.py 8
+echo $?          # 0 = chain with our challenge; 2 = not (reason printed); 1 = nothing ran
+adb uninstall com.attestcheck
+```
+
+Three things are being judged, and they are separate:
+
+1. **Mechanics.** A chain of two or more certificates whose leaf carries extension
+   `1.3.6.1.4.1.11129.2.1.17` with the challenge from this run inside it. One certificate is not an
+   attestation - that is the self-signed public-key certificate you get when no challenge was asked.
+2. **What it says about the device.** `ROOT_OF_TRUST` carries `deviceLocked`, `verifiedBootState`,
+   `verifiedBootKey` and `verifiedBootHash`. On this unlocked device the answer is
+   `deviceLocked=False`, `verifiedBootState=UNVERIFIED` with `verifiedBootKey` all zero bytes -
+   *including while the susfs4ksu module is installed and enabled*, because spoofing reaches the
+   properties and the cmdline, not this. Read the zero key as part of the answer rather than as a
+   contradiction: a key of all zeros means no root-of-trust value reached the signer at all, which is
+   what `UNVERIFIED` says in another field. What the judgement needs is that this channel does not
+   report `VERIFIED` and `deviceLocked=True`, whatever the properties say.
+3. **What it is worth.** `attestationSecurityLevel` and the root of the chain. Both carry findings
+   that belong in the report beside the mechanics, and neither is a failure of this build: the root
+   is self-signed, so there is no external trust anchor for a verifier to check against, and the
+   reported security level is `SOFTWARE` while the certificates' own names say `TEE`.
+
+Which component answers is worth knowing before interpreting either label. The reading came from
+`/vendor/bin/hw/android.hardware.keymaster@4.0-service-qti` (a HIDL HAL, and `keymasterVersion 41` =
+4.1 agrees with that), which holds `/dev/qseecom` open - so the key material sits with the vendor
+side, not in this image. That is also why the extension is Keymaster-shaped: the tag numbers below
+are KeyMint's, taken from the tree's `Tag.aidl`, and they decode this structure correctly.
+
+Measured 2026-11-10 on the cold-installed build, with the module installed and `spoof_cmdline=1`:
+chain of 4 (`CN=Android Keystore Key` <- `title=TEE` <- `title=TEE` <- a root whose DN is a bare
+`serialNumber`, self-signed); `attestationVersion 3`, `keymasterVersion 41`, both security levels
+`SOFTWARE`, `ORIGIN 0`; `deviceLocked=False`, `verifiedBootState=UNVERIFIED`, `verifiedBootKey` all
+zero bytes, `verifiedBootHash` non-zero; `OS_VERSION 170000`, `OS_PATCHLEVEL` and `BOOT_PATCHLEVEL
+202610`, `VENDOR_PATCHLEVEL 20250401`; `ATTESTATION_APPLICATION_ID` naming the test package. In the
+same minute, an unprivileged shell read `ro.boot.verifiedbootstate=green`, `ro.boot.flash.locked=1`,
+`ro.boot.veritymode=enforcing` and `verifiedbootstate=green` on the cmdline. **The two channels
+disagreed, in the direction the hiding intends** - the attestation still shows an unlocked device, so
+an app that consults it sees what the properties no longer say.
+
+Two traps met while reading the structure, both already handled by `check.py` but worth knowing if
+you go at it by hand:
+
+- `openssl x509 -ext 1.3.6.1.4.1.11129.2.1.17` answers **"No extensions in certificate"** on this
+  leaf even though the extension is there; `openssl asn1parse` does see it. Locate it there.
+- Tag numbers are the low 28 bits of the enum values in the tree's
+  `android/hardware/security/keymint/aidl/.../Tag.aidl` (`PURPOSE = 536870913` -> 1). Reading them
+  from memory was wrong twice over: `ROOT_OF_TRUST` is **704**, not 708, and `ATTESTATION_CHALLENGE`
+  is 708.
+
+## 11. Readings that are not judgements
 
 | Reading | Why it is not a failure |
 | --- | --- |
 | Touch mapper `mode - DISABLED`, `InputDeviceOrientation: Rotation0` | the screen was off; those are defaults |
 | `Orientation: Rotation0` under the *Keyboard* Input Mapper | a different mapper, unrelated to touch |
-| `verifiedbootstate=orange` on the first boot after wiping data, or after deleting `/data/adb/ksud` | nothing was seeded yet; it returns next boot |
-| `su: inaccessible or not found` after reinstalling a manager | grants are keyed by uid; grant again in the manager |
+| `verifiedbootstate=orange` with the `susfs4ksu` module absent (a wipe, or the module disabled) | `orange` is this device's real boot state; `green` is what the module writes, so removing it removes the `green`, permanently, not just for one boot |
+| `su -c id` fails for a uid that worked yesterday | that uid has no grant. Grants live in `/data/adb/ksu/.allowlist`, keyed by **package name** (the file holds `com.android.shell`) and loaded once at boot, so a manager reinstalled under the same name keeps them and a differently-named one starts with none; editing the file mid-boot changes nothing. Judge by `su -c id`, not by `command -v su` - the latter still resolves to `/system/bin/su` with no grant at all |
 | No crowning line while no manager is installed | there is nothing to crown |
 | `Network suggestion history: {Empty}`, `systemClockConfidence()=0` with no default route | precondition unmet, do not judge |
 | framecheck exit 3 with a small tilt | correct verdict for a flat pose: pipeline OK, side/sign untested |
+| framecheck or attestcheck exit 1, no lines from the app | the app never ran to completion: not installed, or the screen was asleep and the activity was paused before it registered anything. The scripts wake and unlock the device, so check the install first |
 | `user_rotation` not matching the app's direction | the system synchronizes it while an app forces a direction |
 | `dmesg | grep -c …` for the three stages returns 0 hours after boot | the kernel ring buffer has wrapped; judge by the seeding result |
 | `orange` and no dynamic-manager line on a ROM-only device | the susfs4ksu module is not installed; and a manager that matched one of the kernel's own keys adds no dynamic-manager line at all - judge it by the crowning line |
 
-## 11. Not covered here
+## 12. Not covered here
 
 Any acceptance run should say what it skipped and why. Not covered on the build this document
 describes, each with its reason:
 
 | Item | Why it is not judged here |
 | --- | --- |
-| `su` granting | needs a manager, and the default form installs none; installing one changes its uid, so the grant has to be made in the app first. The `sucompat` path *is* covered: the three stages, the seeding, and the absence of `syscall 142` failures |
-| KeyStore attestation | not measured. It is a separate channel from `verifiedbootstate`: a TEE-signed certificate carrying its own boot-state fields, anchored on hardware rather than on anything in this image. Section 6 judges the channels `adb` can reach; a verdict about attestation would need a client and a reference point, neither of which exists here yet ([root.md](root.md), "What this does not claim") |
-| Captive portal 204 and NTP | no wireless network was configured on the test device, so the precondition was unmet |
+| `su` granting | needs a manager, and the default form installs none; the grant is made in that app's own UI (`ksud help` on this build lists no `grant` subcommand, so nothing here can substitute for it). Once granted it lives in `/data/adb/ksu/.allowlist` keyed by package name, so it survives reinstalling the manager under the same name. Root without a manager is covered: section 6 has the three stages and the seeding cycle, [root.md](root.md) the manager crowning line |
 | Power-state timings, Bluetooth, deep-power-down and reboot timing (the `A*` items of route A in [flash.md](flash.md)) | only meaningful after a change to `boot` / `vendor_boot`; this iteration changed neither |
