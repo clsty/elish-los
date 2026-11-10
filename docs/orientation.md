@@ -98,8 +98,8 @@ first FAIL ever recorded on this check was the screen being off. Wake the screen
 adb reboot
 for i in $(seq 1 100); do sleep 1; adb get-state >/dev/null 2>&1 && break; done
 adb shell 'nohup logcat -v time > /data/local/tmp/boot-log.txt 2>&1 &'
-# after boot completes:
-adb shell 'grep -F "Panel installed at" /data/local/tmp/boot-log.txt'
+# after boot completes - read it from the host, see the note below:
+adb exec-out cat /data/local/tmp/boot-log.txt | grep -F "Panel installed at" | grep -vF adbd
 ```
 
 Expect exactly one line:
@@ -108,8 +108,16 @@ Expect exactly one line:
 Panel installed at 90 degrees: publishing one public device frame, v_public = Rz(+90) * v_hal, TYPE_DEVICE_ORIENTATION step +3
 ```
 
+**Why the host-side read, and why the last `grep`.** This capture records every command `adbd` is
+asked to run, so a device-side `grep` for this phrase writes its own echo into the file - and the
+echo contains the phrase, so every later read counts it again. Measured: after three device-side
+greps the file held 5 matches for a line that is logged once per boot. Filtering on `SensorService`
+does not rescue it, because the echo quotes the filter word too. `cat` is the one command that
+cannot match, and `grep -vF adbd` removes the echoes an earlier run left behind.
+
 Start capturing as soon as `adbd` answers, not when `sys.boot_completed` appears: the latter
-is a dozen seconds later and the line has already been pushed out of the log buffer.
+is a dozen seconds later and the line has already been pushed out of the log buffer. On this device
+`adbd` answered 19 s into the boot and the line was still ahead of it, so there is some margin.
 
 **4. Cross-type self-consistency - the check that catches the interesting mistakes.**
 Quaternion-type sensors and `gravity` take *different* transformation branches in the patch

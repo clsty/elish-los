@@ -60,9 +60,16 @@ The sensor device frame, one line at boot:
 
 ```sh
 adb shell 'nohup logcat -v time > /data/local/tmp/boot-log.txt 2>&1 &'   # start as soon as adbd answers
-adb shell 'grep -F "Panel installed at" /data/local/tmp/boot-log.txt'
+adb exec-out cat /data/local/tmp/boot-log.txt | grep -F "Panel installed at" | grep -vF adbd
 # Panel installed at 90 degrees: publishing one public device frame, v_public = Rz(+90) * v_hal, TYPE_DEVICE_ORIENTATION step +3
 ```
+
+Exactly one line, and read it this way rather than with `adb shell grep`: the capture records every
+command `adbd` is asked to run, so a device-side `grep` for this phrase writes its own echo into the
+file and every later read counts that echo too (measured: 5 matches after three greps, one of them
+real). `cat` matches nothing, and the last `grep` drops the echoes an earlier run left behind.
+`orientation.md` explains why the capture has to start at the first `adbd` answer rather than after
+boot completes.
 
 Camera, judged by facing (expect `BACK 0` and `FRONT 0`; the HAL block numbers are not camera ids):
 
