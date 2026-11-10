@@ -1,4 +1,8 @@
-# build output of tools/framecheck (a throwaway debug keystore lives in there too)
-tools/framecheck/build/
+# Build output of the verification apps under tools/ (built by tools/mkapk.sh).
+tools/*/build/
+# The debug signing key deliberately lives outside build/: build/ is deleted on every run, and a
+# new key changes the APK signature, which makes `adb install -r` refuse with
+# INSTALL_FAILED_UPDATE_INCOMPATIBLE and forces an uninstall between rebuilds.
+tools/*/.signing/
 __pycache__/
 *.pyc
