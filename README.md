@@ -24,7 +24,7 @@ acceptance commands.
 patches/            the whole source delta: apply-*.sh (idempotent) + generated/*.patch
   files/            the files that have no upstream counterpart (rc, config.fs, idc, appcompat)
 docs/               why each change is shaped the way it is, and how to verify it on device
-tools/              the verification tools (framecheck, the doc/self checks)
+tools/              the verification tools (framecheck, attestcheck) and the repository's own checks
 ```
 
 What is **not** here, deliberately:
