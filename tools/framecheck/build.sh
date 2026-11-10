@@ -1,14 +1,19 @@
 #!/bin/sh
 # Builds a minimal orientation-sensor client and installs nothing itself: it uses only
 # the toolchain already in the AOSP tree, so no SDK has to be installed on the host.
-# Usage: sh build.sh [tree-root]   (or export LOS24_TREE; default: a sibling srcs/los24)
+# Usage: sh build.sh [tree-root]   (or export LOS24_TREE; default: the tree kept beside this
+#                                  repository, which a reader from elsewhere will not have)
 # Output: build/framecheck.apk; the judgement script next to it (check.py) uses it.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
-# The toolchain comes from an AOSP/LineageOS tree: pass it here or in LOS24_TREE. The default
-# is where this project keeps its own tree, which a reader from elsewhere will not have.
+# The toolchain comes from an AOSP/LineageOS tree: pass it here or in LOS24_TREE. The default is
+# three levels up from this file - the repository root, then its sibling - because HERE is
+# tools/framecheck, not the repository root. It used to say ../../srcs/los24, which is one level
+# short and points inside this repository, so the documented bare invocation always failed to find
+# a tree and only the explicit argument ever worked. A wrong directory that does exist still gets
+# the clear `missing tool` line from the check below.
 T=${1:-${LOS24_TREE:-}}
-if [ -z "$T" ]; then T=$(cd "$HERE/../../srcs/los24" 2>/dev/null && pwd) || T=""; fi
+if [ -z "$T" ]; then T=$(cd "$HERE/../../../los24" 2>/dev/null && pwd) || T=""; fi
 if [ -z "$T" ]; then
     echo "no source tree: sh build.sh /path/to/los24   (or export LOS24_TREE)" >&2
     exit 1
