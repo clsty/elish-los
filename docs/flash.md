@@ -58,11 +58,24 @@ the vendor side overwrites), `ro.lineage.version`, and `uname -r`.
 
 ## 2. Route A: from the stock firmware (wipes everything)
 
-Scope, stated once: every rule inside these steps is measured, but **the whole route has not been
-walked end to end from a stock device** - the builds this project grew up on were installed onto a
-tablet that already ran LineageOS. So the order is derived (the firmware package owns the partition
-and firmware baseline, `vendor_boot` owns the recovery, the payload owns the rest), and the first
-person to walk it should expect to report what differs.
+Scope, stated once: every rule inside these steps is measured, and the route as a whole has now been
+walked end to end - 2026-11-10, from a stock device, one pass, 31 firmware commands with no failures,
+through to a booted system that reported the expected build and kernel. The walk also showed where
+the steps and the firmware package disagree; those places are marked below rather than left for the
+next person to find.
+
+What the walk took, on a machine with the images on local disk, so nobody has to guess from the
+package's size. `fastboot` is far faster than `adb sideload` on the same cable, so the two should not
+be estimated from each other:
+
+| Step | Time |
+| --- | --- |
+| Unpacking the 5.4 GB `.tgz` | 21 s |
+| The 31 firmware commands, `super` included (7.5 GB, sparse, 11 chunks) | 4 min 40 s, of which `super` was 199 s |
+| `boot` + `vendor_boot` into both slots | 15 s |
+| ROM sideload (1.47 GB) | 2 min 30 s |
+| GApps sideload (544 MB) | 31 s |
+| First boot after a data wipe, to `sys.boot_completed` | about 3.5 min |
 
 1. Flash the `HyperOS 1.0.2.0.TKYCNXM` fastboot package (CN firmware line). This re-partitions
    and clears all data and cannot be undone by flashing a ROM. Unpack the `.tgz` first; the
@@ -88,7 +101,8 @@ person to walk it should expect to report what differs.
 
    ```sh
    d=/path/to/elish_images_OS1.0.2.0.TKYCNXM_13.0/   # the unpacked package, note the trailing slash
-   slot=$(fastboot getvar current-slot 2>&1 | sed -n 's/^current-slot: //p')
+   slot=$(adb shell getprop ro.boot.slot_suffix | tr -d '\r' | sed -n 's/^_//p')
+   [ -n "$slot" ] || slot=$(fastboot getvar current-slot 2>&1 | sed -n 's/^current-slot: //p')
    [ -n "$slot" ] || slot=$(fastboot getvar current-slot 2>&1 | sed -n 's/^current-slot: //p')
    sed -e 's|^fastboot \$\* |fastboot |' -e 's|`dirname \$0`|'"$d"'|g' \
        -e 's|^fastboot set_active |fastboot --set-active=|' \
@@ -98,11 +112,24 @@ person to walk it should expect to report what differs.
      > sta.list
    ```
 
+   The slot is read from the running system rather than from `fastboot getvar`, for the reason given
+   in section 1: this ABL's `current-slot` answer has not been trustworthy, and a wrong slot silently
+   retargets every slotted partition in the list. If the device no longer boots, use the `getvar`
+   fallback and read the derived list twice.
+
    **Read that list before running it, then run it one line at a time.** It is a list of commands, not
    a script to hand to `sh`: a wrapper swallows the per-partition output, and that output is the only
    diagnosis a failed flash gives. Paste one line, read what it printed, then paste the next. When a
    line fails, re-send just that line - resending a partition that already succeeded is harmless
    (rule 3), which is what makes the retry safe however often it turns out to be needed.
+
+   Two lines in the derived list deserve a look against the slot you actually wrote. The package's own
+   script ends with `set_active a`, hard-coded (`flash_all.sh` line 84 of the version above): the
+   transformation changes that command's **form**, not its argument, so a device whose slotted images
+   went to `_b` would be told to boot a slot whose firmware was never written. Set it to the slot you
+   wrote - the walk of 2026-11-10 ran `--set-active=b` for exactly that reason. And that version
+   contains **no `gpt` line at all**, so the note below did not apply to it; it matters only for a
+   package that carries one.
 
    A `not found` for `gpt_backup$slot` on a device that has never re-partitioned is not a
    failure: that partition does not exist yet, and this very run creates it.
@@ -191,20 +218,28 @@ fastboot reboot recovery
 adb reboot recovery
 adb devices                  # must say sideload (rule 7); adb reboot sideload if not
 adb sideload "$ZIP"          # absolute path: adb stats it on the host, a relative path is an rc=1 no-op
-adb reboot recovery; adb devices
+adb devices                  # if it still says sideload, push the next package right away
 adb sideload MindTheGapps-17.0.0-arm64-*.zip
 ```
 
-`failed to read command: Success` at the end of a sideload is normal. When the transfer
-completes, adbd restarts and `adb devices` shows `unauthorized`; `adb kill-server && adb
-start-server` fixes it without touching the screen.
+`failed to read command: Success` at the end of a sideload is normal. Between the two transfers the
+recovery has a step of its own, and on 2026-11-10 it cost the first person through a detour: when the
+ROM finishes, recovery asks whether it should restart itself. Answering `Yes` re-enters recovery, and
+entering recovery turns the adb function off - so `Advanced → Enable ADB` is needed again before the
+next package. If `adb devices` still says `sideload`, nothing has restarted and there is nothing to
+re-enable: push the next package.
 
-**Two `unauthorized` readings look identical and are not the same case.** The one just above follows a
-finished transfer, and a host-side restart clears it. The one met on *entering* recovery (measured
-2026-11-10) means the adb function is not enabled yet: host-side restarts change nothing, and **this
+Which brings one rule with it. **Do not restart the adb server to fix a connection that already says
+`sideload`.** Measured the other way round: `adb kill-server && adb start-server` on a healthy
+`sideload` turned it into `unauthorized`, and only the screen could put it back.
+
+**Two `unauthorized` readings look identical and are not the same size of problem.** The one met on
+*entering* recovery (measured 2026-11-10) means the adb function is not enabled yet, and **this
 recovery never shows an "allow USB debugging" prompt, in no state and under no circumstances** - so
 nothing will arrive on the screen however long you wait for it. The only way in is
-`Advanced → Enable ADB`, after which `adb devices` reads `sideload` directly.
+`Advanced → Enable ADB`, after which `adb devices` reads `sideload` directly. Re-entering recovery
+after a finished transfer is the same case, for the same reason. Nothing a host does reaches either
+one: a server restart is not a substitute for that menu item, and it cannot undo one.
 
 GApps are **not optional after a ROM-only flash**: the ROM payload is a full `super` image, and
 MindTheGapps installs into `system/`, which the payload rewrites wholesale. One moment needs a
@@ -231,4 +266,6 @@ are in [root.md](root.md); section 6 of [acceptance.md](acceptance.md) is the re
    the most common cause of a "GApps disappeared" report that is not a regression.
 
 A third, smaller one: `adb root` does not survive a reboot. Re-issue it after every boot
-before anything that needs a root shell.
+before anything that needs a root shell. On a fresh `/data` it also needs one setting first -
+Settings → System → Developer options → **Rooted debugging** - because a new `/data` ships it off and
+adbd refuses the command until it is on, naming the setting in its own error text.
