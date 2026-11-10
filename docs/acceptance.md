@@ -67,10 +67,20 @@ normal), and both `.idc` files present in the partition.
 The sensor device frame, one line at boot:
 
 ```sh
-adb shell 'nohup logcat -v time > /data/local/tmp/boot-log.txt 2>&1 &'   # start as soon as adbd answers
+adb reboot
+for i in $(seq 1 100); do sleep 1; adb get-state >/dev/null 2>&1 && break; done
+adb shell 'nohup logcat -v time > /data/local/tmp/boot-log.txt 2>&1 &'   # the first moment adbd answers
+while [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; do sleep 2; done
+sleep 5
 adb exec-out cat /data/local/tmp/boot-log.txt | grep -F "Panel installed at" | grep -vF adbd
 # Panel installed at 90 degrees: publishing one public device frame, v_public = Rz(+90) * v_hal, TYPE_DEVICE_ORIENTATION step +3
 ```
+
+Three lines of that block carry the measurement, not decoration. The line is written early in the
+boot and this device's log buffer is small, so waiting for `sys.boot_completed` - a dozen seconds
+later - means reading a buffer that has already pushed the line out. Hence the reboot, and hence
+starting the capture at the first `adb get-state` answer rather than after the wait loop;
+`orientation.md` has the timings it was measured with.
 
 Exactly one line, and read it this way rather than with `adb shell grep`: the capture records every
 command `adbd` is asked to run, so a device-side `grep` for this phrase writes its own echo into the
