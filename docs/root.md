@@ -185,13 +185,20 @@ hiding**. Three of the readings people check for hiding come from things outside
   The assignment is not decoration: `pm path` prefixes each line with `package:`, a split APK lists
   several files, and `adb shell` appends `\r`. The kernel accepts only a file named `base.apk`.
 
-  **This is not circular, but it is ordered.** `only_root()` reads `current_uid()`, not which domain
-  the caller is in, so on a `userdebug` build `adb root` is the other candidate for that first
-  registration - the one available before any manager exists, since `su` needs a manager to have
-  granted it. Whether the shell domain reaches the driver's ioctl is **not measured here**, and it is
-  the first thing to settle on a fresh install: `adb root; adb shell id` and then the command above.
-  If it answers `Permission denied` while `id` says uid 0, an SELinux denial is the reason
-  (`adb shell dmesg | grep avc`), and `su -c` is the path that works.
+  **This is not circular, and on a `userdebug` build it is not close.** `only_root()` reads
+  `current_uid()`, and `adb root` supplies uid 0 without any manager being involved. The SELinux half
+  of the question answers itself the same way: adbd is declared in
+  `/apex/com.android.adbd/etc/init.rc` as `adbd --root_seclabel=u:r:su:s0`, so the root shell runs in
+  the `su` domain rather than `shell` - which is why it reaches the driver's ioctl on an `Enforcing`
+  device. Measured 2026-11-10: `id -u` → `0`, `id -Z` → `u:r:su:s0`, and
+  `/data/adb/ksud kernel dynamic-manager get` returned the registered record with rc=0. The default
+  label comes from the adbd APEX, not from anything this ROM adds, so it holds on a fresh install too.
+
+  Two readings from that same check save time later. **Without** `adb root` the failure is not a
+  permission error but `127 … /data/adb/ksud: inaccessible or not found`, because `/data/adb` is
+  `0700 root` and uid 2000 cannot resolve the path at all; looking for an SELinux denial there finds
+  nothing. And `su` is not provided by `adb root` - it is a separate matter, covered at the end of
+  this page.
 
   One asymmetry worth knowing, because it dissolves the apparent deadlock: **registration** reads a
   signature off any file path (`apk_sign::get_apk_signature(&apk)` in `userspace/ksud/src/android/cli.rs`

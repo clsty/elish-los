@@ -194,6 +194,21 @@ for a manager signed with a key outside the kernel's built-in list means registe
 rule, the command and why `su` is a prerequisite rather than a formality). On a device that has the ROM only, or after a factory reset, expect `orange` and
 no dynamic-manager line, and treat that as the precondition missing rather than as a failure.
 
+The root channel itself, worth one line before debugging anything below it - probe with the **read**
+subcommand, since `set-apk` would change the registration you are trying to verify:
+
+```sh
+adb root; adb shell 'id -u; id -Z'                       # 0  u:r:su:s0 (adbd's own --root_seclabel)
+adb shell '/data/adb/ksud kernel dynamic-manager get'    # rc=0 = the channel is open; prints size/hash
+```
+
+An unregistered device answers the same way - rc 0 with `size: 0` - because `Get` prints whatever the
+ioctl returns and only a failed ioctl raises (`android/cli.rs`, the `DynamicManagerOp::Get` arm), so
+this line tests the channel and not the registration. Two failure readings, then, are distinct: rc
+**127** `inaccessible or not found` means you are not root - `/data/adb` is `0700 root`, so uid 2000
+cannot resolve the path - while a non-zero rc **with** an `Error:` line means the kernel refused the
+call. Do not go looking for an avc denial in the first case.
+
 ```sh
 adb shell 'cat /proc/cmdline' | grep -o 'verifiedbootstate=[a-z]*'   # green
 adb shell getprop ro.boot.verifiedbootstate                          # green (both channels)
