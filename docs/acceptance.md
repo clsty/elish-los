@@ -2,7 +2,8 @@
 
 Every claim in `docs/` reduced to a command and the value that makes it pass. All commands
 are bare `adb`; nothing here needs a root shell unless the line says so (`adb root` is needed
-after each boot - it does not survive a reboot).
+after each boot - it does not survive a reboot - and on a fresh `/data` it first needs the Rooted
+debugging switch, which [root.md](root.md) explains at its top).
 
 One convention worth knowing before you run anything: a command that greps for an expected
 string exits **1** when the string is absent, which is a pass criterion here, not a script
@@ -201,33 +202,59 @@ rule, the command and why `su` is a prerequisite rather than a formality). On a 
 no dynamic-manager line, and treat that as the precondition missing rather than as a failure.
 
 The root channel itself, worth one line before debugging anything below it - probe with the **read**
-subcommand, since `set-apk` would change the registration you are trying to verify:
+subcommand, since `set-apk` would change the registration you are trying to verify. If `adb root`
+answers `ADB Root access is disabled by system setting - enable in Settings -> System -> Developer
+options` and `id -u` stays `2000`, that is the switch named above rather than a broken build.
 
 ```sh
 adb root; adb shell 'id -u; id -Z'                       # 0  u:r:su:s0 (adbd's own --root_seclabel)
-adb shell '/data/adb/ksud kernel dynamic-manager get'    # rc=0 = the channel is open; prints size/hash
+adb shell '/data/adb/ksud kernel dynamic-manager get'    # reads the registration; changes nothing
 ```
 
-An unregistered device answers the same way - rc 0 with `size: 0` - because `Get` prints whatever the
-ioctl returns and only a failed ioctl raises (`android/cli.rs`, the `DynamicManagerOp::Get` arm), so
-this line tests the channel and not the registration. Two failure readings, then, are distinct: rc
-**127** `inaccessible or not found` means you are not root - `/data/adb` is `0700 root`, so uid 2000
-cannot resolve the path - while a non-zero rc **with** an `Error:` line means the kernel refused the
-call. Do not go looking for an avc denial in the first case.
+An unregistered device does not answer with rc 0. Measured on a cold-installed device that had a
+manager installed and nothing registered, the ioctl itself fails:
+
+```
+$ adb shell '/data/adb/ksud kernel dynamic-manager get'
+Error: No data available (os error 61)        # rc=1, i.e. ENODATA
+```
+
+So the three readings each name their own cause, and telling them apart saves the wrong diagnosis:
+
+| Reading | What it means |
+| --- | --- |
+| rc **127**, `inaccessible or not found` | You are not root. `/data/adb` is `0700 root`, so uid 2000 cannot resolve the path - do not go looking for an avc denial in this case |
+| rc **1**, `Error: No data available (os error 61)` | The channel is open and you are root; nothing is registered. This is the *correct* answer for a manager whose signing key the kernel carries built in |
+| rc **0**, `size: …, hash: …` | A dynamic manager is registered |
 
 ```sh
-adb shell 'cat /proc/cmdline' | grep -o 'verifiedbootstate=[a-z]*'   # green
-adb shell getprop ro.boot.verifiedbootstate                          # green (both channels)
+adb shell 'cat /proc/cmdline' | grep -o 'verifiedbootstate=[a-z]*'   # green, needs spoof_cmdline=1
+adb shell getprop ro.boot.verifiedbootstate                          # green, the module's default
 adb shell 'getprop ro.boot.flash.locked; getprop ro.boot.veritymode'  # 1, enforcing
 adb shell 'dmesg | grep -i crowning'                                  # one line with your package
 adb shell 'dmesg | grep -i "dynamic manager" | tail -1'               # injection happened
 ```
 
+What those first three lines are reading has been measured here, and it is worth knowing before a
+reading is called a regression. With the module absent (a cold install, or after `Format data`):
+`orange` on both channels, and `ro.boot.flash.locked`, `ro.boot.veritymode` and
+`ro.boot.vbmeta.device_state` all empty. With it installed and enabled, an unprivileged shell
+(`u:r:shell:s0`) reads `green`, `1`, `enforcing`, `locked`. `fastboot getvar unlocked` answers `yes`
+on this device, so `orange` is its ordinary boot state and nothing in either flash route changes it.
+
+One switch decides whether the first line of that block passes. The module's
+`/data/adb/susfs4ksu/config.sh` ships `spoof_cmdline=0`, while the property channel is spoofed with
+no configuration at all - so a device that answers `green` from `getprop` and `orange` from
+`/proc/cmdline` is not half broken, it is running the default configuration. Set
+`spoof_cmdline=1` and reboot to close the second channel. `uname -r` behaves the same way one level
+down: it keeps the build's own kernel string until `spoof_uname` is set.
+
 With no manager installed there is nothing to crown, so the crowning line is *absent*, which is
-the expected reading for that state; the two rows above it are still judgements, and they
-should still pass. `signature_index=255` in a crowning line is the reserved slot for a dynamic
-manager, so seeing it means `set-apk` did its job; a smaller index means one of the kernel's own
-signing keys matched and nothing had to be registered.
+the expected reading for that state; the rows above it are still judgements, and they
+should still pass. The index in a crowning line says which path recognised the manager, and both
+have been read here: `signature_index=255` is the reserved slot for a dynamic manager, so seeing it
+means `set-apk` did its job, and `signature_index=0` means one of the kernel's own signing keys
+matched and nothing had to be registered.
 
 Both `dmesg` greps here and in the block above are time-sensitive: the kernel ring buffer
 forgets, so hours into a boot they read empty while everything is working. On an aged boot,
