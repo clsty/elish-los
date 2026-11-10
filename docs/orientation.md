@@ -143,6 +143,11 @@ python3 tools/framecheck/check.py 12 "leaning at 45 degrees"
 adb uninstall com.framecheck
 ```
 
+The script wakes the device and dismisses the keyguard first. Without that, a dozing tablet gives a
+run that looks like a broken app: the activity starts behind the keyguard and is paused before it
+registers a listener, so the log holds `BEGIN` and `PROBE` and never a `SNAP`, and the script exits 1.
+Measured both ways on the same pose - exit 1 without the dismissal, exit 0 with it.
+
 Two conditions the script enforces, because ignoring them turns a pass into a fiction:
 
 - **The pose must be tilted** (20 degrees minimum). With the tablet nearly flat, gravity is

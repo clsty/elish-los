@@ -78,18 +78,29 @@ adb shell dumpsys media.camera | grep -A1 -E "android.lens.facing \(80005|androi
   | grep -E "^\s{4,}\S" | paste - - | column -t
 ```
 
-## 3. Sensor self-consistency (no hands on the device)
+## 3. Sensor self-consistency (needs a pose, nothing else)
 
 ```sh
 sh tools/framecheck/build.sh && adb install -r tools/framecheck/build/framecheck.apk
 python3 tools/framecheck/check.py 12 "leaning at 45 degrees"
-echo $?          # 0 = PASS, 3 = pose too flat (pipeline only), 2 = FAIL
+echo $?          # 0 = PASS, 3 = pose too flat (pipeline only), 2 = FAIL, 1 = nothing collected
 adb uninstall com.framecheck
 ```
 
 Pass: exit 0 with the worst angle well under the 2-degree threshold under the `R^T` convention,
 and the `TYPE_ORIENTATION` pair check agreeing on pitch and roll. Reference readings from this
-tablet: 0.00-0.01 degrees settled, and the two branches agreeing within 0.08 degrees.
+tablet: 0.00-0.01 degrees settled, and the two branches agreeing within 0.08 degrees. Measured
+again 2026-11-10 on the cold-installed build at a 48.9 degree tilt: worst angle 0.01.
+
+The heading says a pose, not "no hands": the tablet has to be leaning. That is not decoration -
+with the tablet nearly flat, an error in a rotation about z does not move the world-frame gravity
+vector, so it cannot be seen, and the script says so (exit 3) rather than passing quietly.
+
+Exit 1 means the app logged no sensor snapshots, which is almost always the screen rather than the
+sensors: with the keyguard up, the activity starts behind it and is paused before it registers a
+listener, so the log holds `BEGIN`, a few `PROBE` lines and `END`. The script now wakes the device
+and sends `wm dismiss-keyguard` itself (measured from a dozing, locked device: exit 1 before, exit 0
+after). A screen timeout in the middle of the run pauses the activity the same way.
 
 ## 4. Absolute direction (poses - these need hands)
 
