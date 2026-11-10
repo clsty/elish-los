@@ -352,7 +352,7 @@ endpoint). `dumpsys network_stack` also carries the probe itself, which is the s
 `PROBE_HTTP http://connect.rom.miui.com/generate_204 ... ret=204`.
 
 The last two need a working default route. Without one, `Network suggestion history: {Empty}` and
-`systemClockConfidence()=0` are **precondition unmet, not judgements** (section 11). With a
+`systemClockConfidence()=0` are **precondition unmet, not judgements** (section 12). With a
 connection, `ntp.aliyun.com` and `connect.rom.miui.com/generate_204` are the expected names. Run
 once with the system language set to English.
 
@@ -454,7 +454,31 @@ you go at it by hand:
   from memory was wrong twice over: `ROOT_OF_TRUST` is **704**, not 708, and `ATTESTATION_CHALLENGE`
   is 708.
 
-## 11. Readings that are not judgements
+## 11. Power-state and radio behaviour
+
+This is the kernel's side of the ledger, and nothing else here touches it. The kernel in `boot.img` is
+built from these sources, and the branch this device used before (`Astide`) carried a reboot defect that
+reproduced every single time, along with changes to shutdown and Bluetooth. So these five rows exist to
+catch a regression that no property or dumpsys reading would show.
+
+| Item | Judgement | Status |
+| --- | --- | --- |
+| Reboot to boot | one measurement, **≤120 s** and no power-key hold needed. One run is the judgement, *not* best-of-three: what this guards reproduces every time, so "three runs, one pass" would read looser than the defect | measured 2026-11-10 on the cold-installed build: **36 s** (two further runs under the older ×3 wording: 37 s and 35 s) |
+| Software power-off really cuts power | after ~60 s the screen is dark and the device no longer enumerates on USB at all | judged by the owner's own test on an earlier build (2026-11-04); not re-run on this build |
+| Power-off entered from recovery | the same two readings, entered from recovery's `Power off` | **open.** Its regression target is kernel-side, so only a self-built kernel makes it a valid reading - and this build is one |
+| Drain: 60 min off, 60 min with the screen off | ≤1% and ≤2% respectively, and no growth in `suspend_stats`' `failed_resume*` | waived by the owner's judgement (2026-11-04): the power-off row above already proves the power-off path, and the two hour-long windows were judged to add nothing |
+| Bluetooth controller | pairs, and reconnects after a reconnect of the link; when it fails, the evidence route is the HCI log (developer options -> Bluetooth HCI snoop) | measured by the owner's own test on an earlier build (2026-11-04), once on a fresh `/data` (a true first pairing) and once as a reconnect |
+
+The reboot measurement is two commands and takes under a minute, so it is worth re-running on any build
+that changes `boot`:
+
+```sh
+t0=$(date +%s); adb reboot; adb wait-for-device
+while [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; do sleep 2; done
+echo "$(( $(date +%s) - t0 ))s"           # expected <= 120, and no power key touched
+```
+
+## 12. Readings that are not judgements
 
 | Reading | Why it is not a failure |
 | --- | --- |
@@ -470,12 +494,12 @@ you go at it by hand:
 | `dmesg | grep -c …` for the three stages returns 0 hours after boot | the kernel ring buffer has wrapped; judge by the seeding result |
 | `orange` and no dynamic-manager line on a ROM-only device | the susfs4ksu module is not installed; and a manager that matched one of the kernel's own keys adds no dynamic-manager line at all - judge it by the crowning line |
 
-## 12. Not covered here
+## 13. Not covered here
 
 Any acceptance run should say what it skipped and why. Not covered on the build this document
 describes, each with its reason:
 
 | Item | Why it is not judged here |
 | --- | --- |
-| `su` granting | needs a manager, and the default form installs none; the grant is made in that app's own UI (`ksud help` on this build lists no `grant` subcommand, so nothing here can substitute for it). Once granted it lives in `/data/adb/ksu/.allowlist` keyed by package name, so it survives reinstalling the manager under the same name. Root without a manager is covered: section 6 has the three stages and the seeding cycle, [root.md](root.md) the manager crowning line |
-| Power-state timings, Bluetooth, deep-power-down and reboot timing (the `A*` items of route A in [flash.md](flash.md)) | only meaningful after a change to `boot` / `vendor_boot`; this iteration changed neither |
+| `su` granting | granting happens in a root manager's own UI, and the default form ships no manager (`ksud help` on this build lists no `grant` subcommand), so no command in this document can perform it - and installing a manager changes the unit under test. What *is* measured is where a grant lands and what follows: `/data/adb/ksu/.allowlist`, keyed by package name, loaded once at boot, and it survives reinstalling the manager under the same name (section 6). The test device was granted for `com.android.shell` and that grant was read back |
+| Power-off entered from recovery | the one open row of section 11. It needs an eye on the device (is the screen truly dark, does it come back), and it only says anything on a self-built kernel |
