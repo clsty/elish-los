@@ -53,6 +53,11 @@ def sh(args):
 def collect(seconds):
     sh(["adb", "logcat", "-c"])
     sh(["adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP"])
+    # Waking is not enough: on a dozing device the keyguard stays up, the activity is started
+    # behind it and paused again at once, so it registers no listeners and logs no SNAP lines.
+    # Measured 2026-11-10 on a cold-installed device that had been idle: the log held BEGIN, ten
+    # PROBE lines and END, and nothing else - the run looked like a broken app.
+    sh(["adb", "shell", "wm", "dismiss-keyguard"])
     time.sleep(0.6)
     sh(["adb", "shell", "am", "start", "-n", "com.framecheck/.FrameCheck"])
     time.sleep(seconds)
@@ -130,8 +135,16 @@ def main():
     lines = collect(seconds)
     snaps = [parse(l) for l in lines if l.startswith("SNAP|")]
     if not snaps:
-        print("!! no SNAP lines: the app did not start, or the log was pushed out (the\n"
-              "   main buffer here is only 256 KiB)")
+        print("!! no SNAP lines. The app logs SNAP from its sensor callback, so this means it never\n"
+              "   received a reading. Causes, in the order they were actually met here:\n"
+              "     - the keyguard was up (the activity starts behind it and is paused at once) -\n"
+              "       this run already sends `wm dismiss-keyguard`; check with\n"
+              "       `adb shell dumpsys window | grep isKeyguardShowing`\n"
+              "     - the screen timed out during the run, which pauses the activity: keep the\n"
+              "       duration short or leave the device plugged in and awake\n"
+              "     - the log was pushed out before it was read - this buffer is only 256 KiB\n"
+              "   `adb shell dumpsys package com.framecheck | grep versionName` distinguishes an app\n"
+              "   that is not installed from one that ran and stopped.")
         return 1
 
     print("== sensors the app actually received data from (two per type = vendor + AOSP virtual) ==")
