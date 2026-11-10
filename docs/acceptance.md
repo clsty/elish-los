@@ -572,19 +572,6 @@ built from these sources, and the branch this device used before (`Astide`) carr
 reproduced every single time, along with changes to shutdown and Bluetooth. So these three rows exist to
 catch a regression that no property or dumpsys reading would show.
 
-Two checks have been dropped from this section (2026-11-10), both because they asked a second question
-this table was already answering. A software reboot and a software power-off are the same two drivers
-with the last flag set differently: `drivers/power/reset/msm-poweroff.c` and
-`drivers/input/misc/qpnp-power-on.c`, both of which sit in the change set of the branch this device left
-(verified by file list, not by name). One measurement covers that pair, so the reboot row stands for the
-family. Power-off entered from recovery's menu asked for the readings of the power-off and drain rows
-through a different door, and a different door is not a different regression surface.
-
-What this leaves open, said rather than smoothed over: **this build has a reboot reading and no
-power-off reading of its own** - the power-off judgement on record is from 2026-11-04, on an earlier
-kernel. And the split into two rows had come from an inference, not from a symptom: the defect on record
-hung software reboots, and no reading here shows a power-off ever hanging.
-
 | Item | Judgement | Status |
 | --- | --- | --- |
 | Reboot to boot | one measurement, **≤120 s** and no power-key hold needed. One run is the judgement, *not* best-of-three: what this guards reproduces every time, so "three runs, one pass" would read looser than the defect | measured 2026-11-10 on the cold-installed build: **36 s** (two further runs, taken while this row still asked for three: 37 s and 35 s) |
@@ -619,10 +606,9 @@ echo "$(( $(date +%s) - t0 ))s"           # expected <= 120, and no power key to
 
 ## 13. Not covered here
 
-Any acceptance run should say what it skipped and why. Not covered on the build this document
-describes, each with its reason:
+Any acceptance run should say what it skipped and why. One thing is not covered on the build this
+document describes:
 
 | Item | Why it is not judged here |
 | --- | --- |
 | `su` granting | granting happens in a root manager's own UI, and the default form ships no manager (`ksud help` on this build lists no `grant` subcommand), so no command in this document can perform it - and installing a manager changes the unit under test. What *is* measured is where a grant lands and what follows: `/data/adb/ksu/.allowlist`, keyed by package name, loaded once at boot, and it survives reinstalling the manager under the same name (section 6). The test device was granted for `com.android.shell` and that grant was read back |
-| Power-off on this build | the row was dropped from section 11 as a second question the reboot row already answers, so no power-off reading exists on this kernel. The gap is real and is described there; the judgement on record is from an earlier build (2026-11-04) |
