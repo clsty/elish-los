@@ -34,6 +34,11 @@ adb shell grep -h primary_display_orientation /vendor/build.prop       # present
 adb shell 'dumpsys display | grep -m1 -o "installOrientation [0-9]"'    # installOrientation 1
 ```
 
+The second line needs a root shell, and so does `ls -l /vendor/usr/idc/` further down: as uid 2000
+both answer `Permission denied` (measured; the `ls` also logs `avc: denied { getattr }` on
+`/vendor/usr/idc`, while the `grep` on `/vendor/build.prop` logged nothing). The rest of this section
+is bare `adb`.
+
 Touch and pen - **wake the screen first**, then read all five fields (the field-by-field
 meaning is in [orientation.md](orientation.md)):
 
@@ -289,14 +294,26 @@ a uid, the other is adbd's own `--root_seclabel`. Measured 2026-11-10 on both br
 ```sh
 adb shell 'cmd overlay list' | grep -E "android.framework_res.overlay.elish|com.android.networkstack.overlay.miui"   # both [x]
 adb shell settings get global captive_portal_http_url        # null (a value here would shadow the config)
-adb shell dumpsys connectivity | grep -oE "https?://[A-Za-z0-9._/-]*generate_204" | sort -u
+adb shell dumpsys network_stack | grep -oE "https?://[A-Za-z0-9._/-]*generate_204" | sort -u
 adb shell dumpsys time_detector | grep -iE "ntp|Network suggestion|systemClockConfidence"
 ```
+
+The 204 address is read from **`network_stack`, not `connectivity`**: on this Android version the
+NetworkStack service owns the probes, and `dumpsys connectivity` contains no `generate_204` and no
+`captive`/`portal` line at all (measured 2026-11-10 - reading the wrong service looks like a missing
+endpoint). `dumpsys network_stack` also carries the probe itself, which is the stronger evidence:
+`PROBE_HTTP http://connect.rom.miui.com/generate_204 ... ret=204`.
 
 The last two need a working default route. Without one, `Network suggestion history: {Empty}` and
 `systemClockConfidence()=0` are **precondition unmet, not judgements** (section 10). With a
 connection, `ntp.aliyun.com` and `connect.rom.miui.com/generate_204` are the expected names. Run
 once with the system language set to English.
+
+Measured 2026-11-10 on a cold-installed device, which is a useful case because its UI is English by
+default (`ro.product.locale=en-US`, `persist.sys.locale` empty): the portal probe answered
+`http://connect.rom.miui.com/generate_204 ... ret=204` and the clock came from
+`ntp.aliyun.com/203.107.6.88:123` with `systemClockConfidence()=100`. Two CN endpoints under an
+English UI - that is the independence claim seen from this side.
 
 ## 8. GApps
 
@@ -312,10 +329,18 @@ All three must resolve to a path. The GApps major version must match the ROM's A
 adb shell 'dmesg | grep "avc.*denied"' | sed 's/.*avc:/avc:/' | sort | uniq -c
 ```
 
-On this build there are ~13 denials at boot, all from vendor components and GApps (`getopt` on
-`usap_pool_primary`, and similar). The judgement to make is a *set comparison*: none of them
+On this build there are ~13 distinct denials at boot, all from vendor components and GApps
+(`getopt` on `usap_pool_primary`, and similar), and the count grows with what you ask the device to
+do, so read the set, not the number. The judgement is a *set comparison*: none of them
 should mention `ksu`, `/product/bin`, or any file this project adds. New denials for files this
 project introduces are a real finding; the existing noise is not.
+
+Your own probes appear in this set, and it helps to know which ones do. Reading `/data/adb` or
+`/vendor/usr/idc` as the shell user adds a `getattr` denial each time (measured: `ls` on either path
+produced one). Running `/data/adb/ksud` without root adds **none** - measured 24 denials before the
+probe and 24 after, because `/data/adb` is `0700 root` and the permission check refuses the path
+before SELinux is consulted. That absence is the point: the `127` in section 6 has no avc line to
+find, so a search for one there is a dead end.
 
 ## 10. Readings that are not judgements
 
