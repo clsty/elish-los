@@ -68,13 +68,24 @@ rm -f "$out"
 #    only because GitHub still redirects an old repository name, is invisible to it - and two
 #    upstreams referenced here have already renamed themselves once. Absent network is a note,
 #    not a failure: what this gate is for is the moment of publishing, when there is one.
-ext=$(git ls-files '*.md' NOTICE | xargs grep -hoE 'https?://[^ )"'"'"'`]+' 2>/dev/null | sed 's/[.,;]$//' | sort -u)
+ext=$(git ls-files '*.md' NOTICE | xargs grep -hoE 'https?://[^ )"'"'"'>`]+' 2>/dev/null | sed 's/[.,;>]$//' | sort -u)
+# `>` is not part of an address: markdown autolinks are written <https://…>, and including it turned a
+# correct link into a 404 (measured while poisoning this gate).
 gh_pair() { printf '%s' "$1" | sed -n 's|.*github\.com/\([^/]*\)/\([^/]*\).*|\1/\2|p'; }
 url_fail=0; url_warn=0; url_off=0; url_n=0
 for u in $ext; do
     url_n=$((url_n + 1))
-    got=$(curl -sS -o /dev/null --max-time 25 -L -w '%{http_code} %{url_effective}' "$u" 2>/dev/null || echo '000 none')
+    # HEAD, not GET: an address gate that downloads what it mentions pulls 1.7 GB here (the three
+    # release assets), and a gate that costs minutes does not get run. HEAD answers the only two
+    # things this needs - status and effective URL. Measured 2026-11-10: asset URLs answer 200 under
+    # HEAD, and so do repository pages. Fall back to GET only where HEAD itself is not understood.
+    got=$(curl -sS -o /dev/null -I --max-time 25 -L -w '%{http_code} %{url_effective}' "$u" 2>/dev/null || echo '000 none')
     code=${got%% *}; final=${got#* }
+    case "$code" in
+      000|405|501)
+          got=$(curl -sS -o /dev/null --max-time 25 -L -w '%{http_code} %{url_effective}' "$u" 2>/dev/null || echo '000 none')
+          code=${got%% *}; final=${got#* } ;;
+    esac
     # A 5xx here is GitHub's edge timing out under anonymous load (measured: the same address
     # returns 200 seconds later), so retry it; if it persists, say so without failing. A 4xx is
     # definitive - 404 and 410 are what this gate is for - and a changed owner/repo is a rename.
@@ -87,15 +98,18 @@ for u in $ext; do
               case "$code" in 5*) : ;; *) break ;; esac
           done ;;
     esac
+    src=$(gh_pair "$u"); dst=$(gh_pair "$final")
     if [ "$code" = "000" ]; then
         url_off=$((url_off + 1))
     elif [ "${code:-0}" -ge 500 ] 2>/dev/null; then
         say urls "note $code now from $u (not a broken link)"
     elif [ "${code:-0}" -ge 400 ] 2>/dev/null; then
         say urls "FAIL $code $u"; url_fail=1
-    elif [ -n "$(gh_pair "$u")" ] && [ "$(gh_pair "$u")" != "$(gh_pair "$final")" ]; then
-        # Only a changed owner/repo counts: a GitHub asset or a SourceForge mirror redirect is
-        # the download working as designed, not an address kept alive by a rename.
+    elif [ -n "$src" ] && [ -n "$dst" ] && [ "$src" != "$dst" ]; then
+        # Both sides must carry an owner/repo before a difference can mean anything. A release asset
+        # leaves github.com for release-assets.githubusercontent.com, where there is no pair to read,
+        # and comparing a pair against an empty string had every asset URL reported as renamed. A
+        # real rename still lands on github.com with a different pair, and that is what this catches.
         say urls "renamed $u -> $final"; url_warn=$((url_warn + 1))
     fi
 done
