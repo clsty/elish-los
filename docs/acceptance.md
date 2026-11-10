@@ -106,12 +106,41 @@ after). A screen timeout in the middle of the run pauses the activity the same w
 
 Internal consistency cannot prove that direction zero is the direction you intend.
 
-| Pose | Command | Expected |
+| Pose | What to read | Expected |
 | --- | --- | --- |
-| Each of the four edges down, once each | `adb shell 'dumpsys sensorservice | grep -iE "gravity|accelerometer"'` or read the framecheck SNAP line | the gravity vector points down the edge that is physically down |
-| Landscape, charger right | `adb shell 'dumpsys window | grep -m1 -o "mRotation=[0-9]*"'` | `mRotation=0` |
-| Rotate to the other landscape | the same command | `3` (or `1`), and the UI follows |
-| Landscape, **burst** of several photos | `adb shell 'dumpsys media.camera'` + EXIF of each saved frame | every photo's EXIF `Orientation` is `1`. One photo proves nothing: the symptom was two-state |
+| Each of the four edges down, once each | the gravity vector (the framecheck `SNAP` line is the live one; see the two reading notes below) and `mCurrentRotation` | the axis that reads `+1 g` is the edge physically **up**, and the rotation index is the one that pose deserves |
+| Landscape, charger right | `adb shell 'dumpsys window' \| grep -m1 -o "mCurrentRotation=[A-Z_0-9]*"` | `ROTATION_0` |
+| Rotate to the other landscape | the same command | `ROTATION_180`, and the UI follows |
+| Landscape, **burst** of several photos | EXIF of each saved frame (`/sdcard/DCIM/Camera`) | every photo's EXIF `Orientation` is `1`. One photo proves nothing: the symptom was two-state |
+
+Measured 2026-11-10 on the cold-installed build, four edges, one pass through all of them. Gravity is
+the mean of the settled frames of each pose (24-28 frames per pose, sampled at 400 ms), and
+`device_orient` is the enumeration the framework itself settled on:
+
+| Edge up | gravity | `device_orient` | `mCurrentRotation` |
+| --- | --- | --- | --- |
+| natural landscape (charger right) | `-0.03, +9.80, +0.38` | `0` | `ROTATION_0` |
+| the P-key short edge | `-9.73, +0.71, +0.43` | `3` | `ROTATION_270` |
+| the connector long edge | `-0.18, -9.77, +0.59` | `2` | `ROTATION_180` |
+| the charger short edge | `+9.72, -0.58, +0.09` | `1` | `ROTATION_90` |
+
+Every pose measures about 9.8 with `z` near zero (the screen plane was vertical, so the axis
+assignment is not ambiguous), and each `device_orient` transition lands within a second of the
+matching rotation change. Four photos taken in landscape at the same sitting carry EXIF
+`Orientation: 1` with the pixels already 4160x2368 - stored upright, not rotated on read.
+
+Two reading notes, both found by being wrong first:
+
+- **`mRotation=[0-9]*` matches the wrong thing.** The dump contains
+  `overrideConfig={… mRotation=ROTATION_0}` *before* the numeric `mRotation=0` line, so a `-m1` grep
+  for digits stops there and prints a bare `mRotation=` - an empty reading that looks like a failure.
+  `mCurrentRotation` appears exactly once in `dumpsys window` and is the current value; the
+  `sensor=ROTATION_…` lines under `OrientationSensorJudge` are a history of fallback slots, not a
+  verdict.
+- **`gravity` in `dumpsys sensorservice` can be hours old.** Those "last events" belong to whoever
+  subscribed last; with nothing subscribed, the block still prints - measured reading an hour-old
+  leaning pose while the tablet lay flat. Check the `wall=` timestamp, or get a live value from the
+  `framecheck` `SNAP` lines, which are produced while the app is subscribed.
 
 One spelling note for greps that run **on the device** (inside `adb shell '…'`): its grep is toybox,
 which has no `\|` alternation in either syntax - BRE rejects it and ERE reads it as a literal bar -
