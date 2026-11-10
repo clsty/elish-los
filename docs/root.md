@@ -250,9 +250,12 @@ hiding**. Three of the readings people check for hiding come from things outside
 
   Two readings from that same check save time later. **Without** `adb root` the failure is not a
   permission error but `127 … /data/adb/ksud: inaccessible or not found`, because `/data/adb` is
-  `0700 root` and uid 2000 cannot resolve the path at all; looking for an SELinux denial there finds
-  nothing. And `su` is not provided by `adb root` - it is a separate matter, covered at the end of
-  this page.
+  `0700 root` and uid 2000 cannot resolve the path at all. The permission check refuses it before
+  SELinux is consulted, so there is no avc line to find for that probe - measured by counting denials
+  before and after running it unprivileged: 24 and 24, nothing added. Listing the directory does log
+  one (`avc: denied { getattr }` on `/data/adb` from `ls`), which is a different operation and not the
+  cause of the `127`. And `su` is not provided by `adb root` - it is a separate matter, covered at the
+  end of this page.
 
   Three ways to get that one command issued, which are not the same kind of thing:
 
