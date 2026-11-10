@@ -247,7 +247,9 @@ adb unroot; sleep 4; adb wait-for-device; adb shell su -c id
 
 `su: inaccessible or not found` is the correct reading for an app that has not been granted -
 and after reinstalling a manager the uid changed, so old grants do not apply. Grant once in the
-manager UI, then expect `uid=0(root)`.
+manager UI, then expect `uid=0(root)` in the `ksu` domain: `id -Z` reads `u:r:ksu:s0`, **not** the
+`u:r:su:s0` that `adb root` reports, because the two routes are different - one is KernelSU granting
+a uid, the other is adbd's own `--root_seclabel`. Measured 2026-11-10 on both branches.
 
 ## 7. Network
 

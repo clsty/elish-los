@@ -4,11 +4,21 @@ Root here means a KernelSU-based kernel implementation compiled into this device
 kernel, with the userspace half delivered by the system image. Nothing is flashed
 separately, and nothing has to be installed to make root work.
 
-There is a second, smaller root story in this project: `adb root` does not work on these
-images by default, because LineageOS ships `userdebug` builds with `ro.adb.secure=1` and no
-`adb_root` feature. The kernel-side patch adds it (`kernel/feature/adb_root.c`), which is why
-`adb root` works here without unlocking anything else. It is mentioned here for completeness;
-it is not part of what KernelSU provides.
+There is a second, smaller root story: whether `adb root` works at all, because the properties
+people reach for to answer that disagree on this build. `ro.build.type` reports `user` and
+`ro.debuggable` reports `0`, while `ro.product.build.type` reports `userdebug`. Measured 2026-11-10,
+`adb root` works here (`id -u` -> `0`, `id -Z` -> `u:r:su:s0`), so read `id -u` and none of those
+properties.
+
+Two explanations are worth separating, since the tempting one is wrong. AOSP's adbd keeps its
+privileges only when `service.adb.root=1` coincides with its own debuggable check
+(`packages/modules/adb/daemon/main.cpp`, `should_drop_privileges()`). With `ro.secure=1` and
+`ro.debuggable=0` measured on device, that check is the branch this build takes, and its runtime half
+is ruled out - so the debuggable answer comes from how adbd was compiled, not from the device's
+properties. The KernelSU `adb_root` feature (`kernel/feature/adb_root.c`) is a separate route: it
+injects `LD_PRELOAD=/data/adb/ksu/lib/libadbroot.so` into adbd, logged as `escape to root for adb`.
+That route runs here but is not what the working `adb root` depends on - measured by moving the
+library aside and restarting adbd, after which `adb root` still returned uid 0.
 
 ## Why the kernel needs patching at all
 
@@ -185,7 +195,7 @@ hiding**. Three of the readings people check for hiding come from things outside
   The assignment is not decoration: `pm path` prefixes each line with `package:`, a split APK lists
   several files, and `adb shell` appends `\r`. The kernel accepts only a file named `base.apk`.
 
-  **This is not circular, and on a `userdebug` build it is not close.** `only_root()` reads
+  **This is not circular, and it is not close on this build.** `only_root()` reads
   `current_uid()`, and `adb root` supplies uid 0 without any manager being involved. The SELinux half
   of the question answers itself the same way: adbd is declared in
   `/apex/com.android.adbd/etc/init.rc` as `adbd --root_seclabel=u:r:su:s0`, so the root shell runs in

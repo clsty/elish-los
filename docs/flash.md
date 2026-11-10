@@ -213,9 +213,12 @@ nothing will arrive on the screen however long you wait for it. The only way in 
 
 GApps are **not optional after a ROM-only flash**: the ROM payload is a full `super` image, and
 MindTheGapps installs into `system/`, which the payload rewrites wholesale. One moment needs a
-human at the device: when the GApps transfer finishes, the Google apps licence page appears and
-`Accept` must be pressed (wake the screen with a short power-key press if it went dark). That is
-the only point in the whole flow where someone has to be next to the tablet. Then
+human at the device, and its reason is signatures rather than paperwork: MindTheGapps signs with
+its own key, which is not one of the keys recovery verifies against, so when that transfer finishes
+recovery reports the mismatch and waits for confirmation - press **`Yes`** to continue the install
+(wake the screen with a short power-key press if it went dark). It is a yes/no prompt, not a licence
+page; there is no licence page anywhere in this flow. That is the only point in the whole flow where
+someone has to be next to the tablet. Then
 `Reboot system now`. The GApps package this ROM was tested with - file name, hash and release page -
 is the row marked GApps in [build.md](build.md).
 
