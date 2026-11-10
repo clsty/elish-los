@@ -4,21 +4,39 @@ Root here means a KernelSU-based kernel implementation compiled into this device
 kernel, with the userspace half delivered by the system image. Nothing is flashed
 separately, and nothing has to be installed to make root work.
 
-There is a second, smaller root story: whether `adb root` works at all, because the properties
-people reach for to answer that disagree on this build. `ro.build.type` reports `user` and
-`ro.debuggable` reports `0`, while `ro.product.build.type` reports `userdebug`. Measured 2026-11-10,
-`adb root` works here (`id -u` -> `0`, `id -Z` -> `u:r:su:s0`), so read `id -u` and none of those
-properties.
+There is a second, smaller root story: whether `adb root` works at all. It does here, but it has one
+precondition that a fresh install does not meet on its own.
 
-Two explanations are worth separating, since the tempting one is wrong. AOSP's adbd keeps its
-privileges only when `service.adb.root=1` coincides with its own debuggable check
-(`packages/modules/adb/daemon/main.cpp`, `should_drop_privileges()`). With `ro.secure=1` and
-`ro.debuggable=0` measured on device, that check is the branch this build takes, and its runtime half
-is ruled out - so the debuggable answer comes from how adbd was compiled, not from the device's
-properties. The KernelSU `adb_root` feature (`kernel/feature/adb_root.c`) is a separate route: it
-injects `LD_PRELOAD=/data/adb/ksu/lib/libadbroot.so` into adbd, logged as `escape to root for adb`.
-That route runs here but is not what the working `adb root` depends on - measured by moving the
-library aside and restarting adbd, after which `adb root` still returned uid 0.
+**Settings -> System -> Developer options -> Rooted debugging has to be on.** It is a per-`/data`
+setting and a new `/data` leaves it off, so this is the first thing a cold-installed device refuses.
+Asked while off, adbd says so in as many words and keeps its privileges:
+
+```
+$ adb root
+ADB Root access is disabled by system setting - enable in Settings -> System -> Developer options
+$ adb shell id -u
+2000
+```
+
+Toggled on, the same command works: `restarting adbd as root`, then `id -u` -> `0` and `id -Z` ->
+`u:r:su:s0`. The gate is readable in the source. Modern adbd asks `adbroot_service.getEnabled()`
+first (`packages/modules/adb/daemon/restart_service.cpp`) and only falls back to the debuggable check
+people usually reach for (`should_drop_privileges()` in `daemon/main.cpp`) when that service call
+fails; the service's own binary ships here as `/system_ext/bin/adb_root`. Measured 2026-11-10: with
+the switch off, `ro.debuggable=0` and `ro.secure=1` were both in place and `adb root` still failed,
+and with it on, the same properties were unchanged and it worked. So the properties are not the gate,
+and they are not a criterion either - `ro.build.type` has read `user` on one boot of this device and
+`userdebug` on another, while all four partitions reported `userdebug` on the second. Read `id -u`.
+
+The switch does not produce a `su`. That is KernelSU's, and it follows its own rule: until the shell
+uid is granted in a manager, `command -v su` returns nothing and `su -c id` fails with 127 even with
+Rooted debugging on. The two routes are covered at the end of this file.
+
+A third route exists and is worth naming because it looks like the answer. The KernelSU `adb_root`
+feature (`kernel/feature/adb_root.c`) injects `LD_PRELOAD=/data/adb/ksu/lib/libadbroot.so` into adbd,
+logged as `escape to root for adb`. That route runs here but is not what the working `adb root`
+depends on - measured by moving the library aside and restarting adbd, after which `adb root` still
+returned uid 0.
 
 ## Why the kernel needs patching at all
 
@@ -127,18 +145,38 @@ adb install -r ReSukiSU_v4.2.0-rc1_35061-arm64-v8a-release.apk
 adb shell 'dmesg | grep -i crowning'        # one Crowning manager line = the kernel found it
 ```
 
-Which manager to install is a real choice, and the two answers are not equivalent:
+Which manager to install is a real choice, and the two answers are not equivalent. Both branches
+below have now been walked on this device, and the crowning line tells you which one you are in:
 
-- **The upstream APK** (the asset above) keeps the upstream package name. The module still hides
-  the mount and cmdline side, but a detecting app can also just look for that name - and the name
-  is the one thing the image cannot change for you. Root itself works the same. Such an APK is
-  signed with a key the kernel carries built in, so it is *expected* to be recognised without
-  registration - but that has not been measured on this device, so treat the crowning line below
-  as the question, not as a formality.
+- **The upstream APK** (the asset above) keeps the upstream package name, and its signing key is one
+  the kernel carries built in. Measured on a cold-installed device with no other manager present:
+
+  ```
+  KernelSU: Crowning manager: com.resukisu.resukisu uid=10183, signature_index=0
+  ```
+
+  Index `0` is the first entry in the kernel's built-in table, so **no registration is needed** and
+  `dynamic-manager get` keeps answering `ENODATA` - there is nothing registered, and that is correct.
+  The module still hides the mount and cmdline side, but a detecting app can also just look for that
+  name - and the name is the one thing the image cannot change for you. Root itself works the same.
 - **A manager built with your own signing key and package name** is the form root hiding is about
-  (see the reason nothing is preinstalled above). It is not in the kernel's key list, so it
-  needs the one-time `set-apk` registration described under "Root hiding" - measured on this
-  device, where it was crowned in the reserved slot.
+  (see the reason nothing is preinstalled above). It is not in the kernel's key list, so it needs the
+  one-time `set-apk` registration described under "Root hiding". Measured: it is then crowned in the
+  reserved slot, `signature_index=255`.
+
+Registration does not wait for a reboot. Measured, on the boot where it was issued:
+
+```
+[  74.566362] KernelSU: Crowning manager: <pkg> uid=10184, signature_index=255
+[  74.566725] KernelSU: dynamic manager updated: size=0x2e7, hash=8078e577...
+```
+
+Both records live under `/data`, which is what makes them device-side rather than image-side: the
+registration is `/data/adb/ksu/.dynamic_manager` (JSON, re-applied by `ksud` on boot) and granted
+root access is `/data/adb/ksu/.allowlist`, keyed by package name. Clearing `/data` loses both, and a
+manager that was granted access to something survives being uninstalled, because the grant was never
+inside it. Neither file is read a second time within a boot: moving `.allowlist` aside left `su`
+working until the next reboot.
 
 The kernel finds the manager in `/data/app` by scanning APK paths - the path is parsed for the package name (the second-to-last path
 segment) and the file must be named `base.apk`, which is why the *optional* preinstall form
@@ -179,7 +217,11 @@ hiding**. Three of the readings people check for hiding come from things outside
 - **`verifiedbootstate=green` on both channels** comes from the KernelSU module `susfs4ksu`
   ([sidex15/susfs4ksu-module](https://github.com/sidex15/susfs4ksu-module)), which rewrites the
   cmdline parameters (`spoof_cmdline=1`) and the matching properties. The kernel build carries SuSFS itself, but
-  the policy - which path to hide, which parameter to spoof - lives in that module.
+  the policy - which path to hide, which parameter to spoof - lives in that module. Two readings from
+  the module as shipped, on this device: the property channel is spoofed with no configuration
+  (`getprop ro.boot.verifiedbootstate` -> `green`, and `ro.boot.flash.locked`, `ro.boot.veritymode`,
+  `ro.boot.vbmeta.device_state` appear where they had been empty), while `/proc/cmdline` keeps
+  `orange` until `spoof_cmdline=1` is set in `/data/adb/susfs4ksu/config.sh` and the device reboots.
 - **The manager being recognized** is a signature check, not a package-name check: the kernel
   compares each candidate against a built-in list of signing keys, and this build carries six of
   them (`CONFIG_KSU_MULTI_MANAGER_SUPPORT=y` in
@@ -196,7 +238,9 @@ hiding**. Three of the readings people check for hiding come from things outside
   several files, and `adb shell` appends `\r`. The kernel accepts only a file named `base.apk`.
 
   **This is not circular, and it is not close on this build.** `only_root()` reads
-  `current_uid()`, and `adb root` supplies uid 0 without any manager being involved. The SELinux half
+  `current_uid()`, and `adb root` supplies uid 0 without any manager being involved - provided the
+  Rooted debugging switch from the top of this page is on, because that is what `adb root` answers
+  to. The SELinux half
   of the question answers itself the same way: adbd is declared in
   `/apex/com.android.adbd/etc/init.rc` as `adbd --root_seclabel=u:r:su:s0`, so the root shell runs in
   the `su` domain rather than `shell` - which is why it reaches the driver's ioctl on an `Enforcing`
@@ -210,6 +254,23 @@ hiding**. Three of the readings people check for hiding come from things outside
   nothing. And `su` is not provided by `adb root` - it is a separate matter, covered at the end of
   this page.
 
+  Three ways to get that one command issued, which are not the same kind of thing:
+
+  - `adb root`, then `set-apk` - a device-side step, and it needs the Rooted debugging switch from
+    the top of this page.
+  - `su -c set-apk`, through a manager whose key the kernel already carries, after granting that
+    shell root in its UI - also device-side.
+  - `KSU_EXPECTED_SIZE` and `KSU_EXPECTED_HASH` at build time - compile-time instead:
+    `KernelSU/kernel/Kbuild` turns them into one more entry in the kernel's key table, so the record
+    ships inside `boot.img`.
+
+  Only the third outlives a data wipe, and only the third cannot be added to a build already
+  installed: a build made that way serves either flash route as it stands. It takes the signing
+  certificate's byte length and its SHA-256 - the same two numbers the crowning line and
+  `.dynamic_manager` report - and the entry it adds is the one commented `/* Custom */` in
+  `kernel/manager/apk_sign.c`, which sits inside the `CONFIG_KSU_MULTI_MANAGER_SUPPORT` block this
+  build enables. It is worth doing only for a manager you sign yourself.
+
   One asymmetry worth knowing, because it dissolves the apparent deadlock: **registration** reads a
   signature off any file path (`apk_sign::get_apk_signature(&apk)` in `userspace/ksud/src/android/cli.rs`
   never looks at `/data/app`), while the kernel's **scan** for a manager only accepts an installed
@@ -222,8 +283,9 @@ hiding**. Three of the readings people check for hiding come from things outside
   uid 0 (`only_root` in `kernel/manager/../../supercall/perm.c`; the dispatch table registers
   `KSU_IOCTL_DYNAMIC_MANAGER` with `.perm_check = only_root`). And `su` only answers once a manager
   is installed **and** the shell has been granted root in that manager's UI - so this command cannot
-  precede the manager, which is the order the install steps give it. Whether a manager signed with one of
-  the six needs it as well is not measured on this device, so judge recognition by the reading
+  precede the manager, which is the order the install steps give it. A manager signed with one of the
+  six needs nothing: measured, the upstream APK was crowned at `signature_index=0` while
+  `dynamic-manager get` still answered `ENODATA`. So judge recognition by the reading
   (`dmesg | grep -i crowning`), not by whether the command was run.
 - Both live under `/data` (`/data/adb/modules`, `/data/adb/ksu/.dynamic_manager`), so a
   **factory reset or Format data removes them** and the readings go back to what a ROM-only
@@ -254,13 +316,14 @@ device, so nothing here should be read as claiming them:
 
 | Mechanism | Where it comes from | Reading that proves it ran |
 | --- | --- | --- |
-| Locked-state indication | the `susfs4ksu` module | `verifiedbootstate=green` **both** in `/proc/cmdline` **and** in `getprop ro.boot.verifiedbootstate`; `ro.boot.flash.locked=1`, `ro.boot.veritymode=enforcing` |
+| Locked-state indication | the `susfs4ksu` module | `verifiedbootstate=green` **both** in `/proc/cmdline` **and** in `getprop ro.boot.verifiedbootstate`; `ro.boot.flash.locked=1`, `ro.boot.veritymode=enforcing`. The property half is the module's default; the cmdline half needs `spoof_cmdline=1` |
 | SuSFS mount hiding | kernel SuSFS + that module | the module listed enabled by `/data/adb/ksud module list`; `ksu_susfs` present in `/data/adb/ksu/bin` |
 | Manager recognition | the manager APK; `set-apk` if its signing key is not one of the kernel's six | `dmesg | grep -i crowning` shows exactly one `Crowning manager: <pkg>` line, and `SYS_SECCOMP, syscall 142` count is 0 (a manager that was not crowned dies on `reboot(2)`) |
 
 The index in that line says which of the two paths registered it: 255 is the reserved slot for a
 manager added through `set-apk`, while a key in the built-in list takes one of the 254 general
-slots (`kernel/manager/apk_sign.c`).
+slots (`kernel/manager/apk_sign.c`). Both have been read here: `signature_index=0` for the upstream
+APK, `signature_index=255` for one registered through `set-apk`.
 
 With no manager installed at all, the first two rows still hold and there is nothing to crown
 - the crowning line is absent, and that is the expected reading rather than a failure.
