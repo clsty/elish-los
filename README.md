@@ -44,10 +44,58 @@ What is **not** here, deliberately:
   filename and its hash are a record of this build's input and are overridable). Install any
   manager of that release; `ksud` and the manager must agree on the release.
 
+## Download
+
+| file | bytes | SHA-256 |
+| --- | --- | --- |
+| [`lineage-24.0-20261109-UNOFFICIAL-elish.zip`][dl-zip] | 1,468,406,575 | `1ae728cac801b3c4cc12c420ef10bfabe74f209d6b454769b655464d274f1eeb` |
+| [`boot.img`][dl-boot] | 201,326,592 | `d8ba7b098e23d2ca48b68dc9a21d4111e7ae0c0c20c5583972007721478f3de0` |
+| [`vendor_boot.img`][dl-vb] | 100,663,296 | `447381c8efbb844aeca373334426285a7cddd387dbe22fb1c3bdf411b61df42d` |
+
+```sh
+sha256sum -c - <<EOF
+1ae728cac801b3c4cc12c420ef10bfabe74f209d6b454769b655464d274f1eeb  lineage-24.0-20261109-UNOFFICIAL-elish.zip
+d8ba7b098e23d2ca48b68dc9a21d4111e7ae0c0c20c5583972007721478f3de0  boot.img
+447381c8efbb844aeca373334426285a7cddd387dbe22fb1c3bdf411b61df42d  vendor_boot.img
+EOF
+```
+
+**Coming from the stock firmware, take all three.** This build has no `recovery.img` - the LineageOS
+recovery lives inside `vendor_boot`, so on a stock tablet those two images are what make the recovery
+you install from exist ([`docs/flash.md`][flash], Route A). If the tablet already runs a build from
+this project, **the zip alone is enough**: the package carries `boot` and `vendor_boot` too, into the
+slot it installs to. You will also need a MindTheGapps package matching this Android version; the one
+this ROM is tested with, with its hash and release page, is the GApps row in [`docs/build.md`][build].
+
+Read these three lines before installing:
+
+- It is **userdebug** and signed with the **AOSP test key**. That is fine for development and root
+  testing; it is not a daily-driver posture, and a build signed with a different key will require
+  wiping userdata ([`docs/build.md`][build]).
+- Install by **sideloading from recovery**, with GApps in the same session
+  ([`docs/flash.md`][flash]). Route A has been walked end to end from stock on 2026-11-10 - one pass,
+  31 firmware commands, no failures - and that document carries the measured timings along with the
+  two lines of the firmware package's own list that need checking before you run them.
+- Root is in the kernel, but **no manager APK is preinstalled**, and the manager is a real choice:
+  the upstream APK is recognised by a key the kernel carries (measured: crowned at
+  `signature_index=0`, nothing to register), while a manager built with your own key and package name
+  - the form root hiding is about - needs one registration command (`signature_index=255`), and
+  turning on `adb root` on a fresh install needs one setting first ([`docs/root.md`][root]).
+
+What has been verified on the device, and how, is the checklist in [`docs/acceptance.md`][acc].
+
+[dl-zip]: https://github.com/clsty/elish-los24/releases/download/24.0-20261109/lineage-24.0-20261109-UNOFFICIAL-elish.zip
+[dl-boot]: https://github.com/clsty/elish-los24/releases/download/24.0-20261109/boot.img
+[dl-vb]: https://github.com/clsty/elish-los24/releases/download/24.0-20261109/vendor_boot.img
+[flash]: docs/flash.md
+[build]: docs/build.md
+[root]: docs/root.md
+[acc]: docs/acceptance.md
+
 ## Getting started
 
 Two ways to use this: take a published build, or make your own. Published builds are GitHub
-release assets with their hashes; building takes a synced
+release assets with their hashes, listed under [Download](#download); building takes a synced
 LineageOS 24.0 tree plus three files that no licence lets us ship here, and
 [docs/build.md](docs/build.md) is that path end to end - the manifest to write, the three inputs
 with their hashes, the environment facts that cost real time to learn by accident, and what the
