@@ -121,10 +121,12 @@ adb exec-out screencap -p > state.png      # repeat per state: 4:3, 16:9, VIDEO,
 ```
 
 Expected: for 16:9 and VIDEO, lines at `y=200` and `y=1396` inside the crop; for 4:3 and SCAN,
-nothing. (A 16:9 save area on a 2133-wide panel is 1200 px tall, centred, so 200/1400 is the
-nominal boundary and a 2 dp line reads one pixel inside it. The HAL's own 1.757 aspect family
-differs from the nominal 16:9 by about 7 px - the mask follows the nominal ratio because
-CameraX does not publish the save-area getter.)
+nothing.
+
+Where those two numbers come from: a 16:9 save area on a 2133-wide panel is 1200 px tall and
+centred, so 200 and 1400 are the nominal boundaries, and a 2 dp line reads one pixel inside them.
+The HAL's own 1.757 aspect family sits about 7 px away from the nominal 16:9; the mask follows the
+nominal ratio because CameraX does not publish the save-area getter.
 
 ## The front camera's mirror is a preference, not a HAL bug
 

@@ -102,6 +102,8 @@ be estimated from each other:
    ```sh
    d=/path/to/elish_images_OS1.0.2.0.TKYCNXM_13.0/   # the unpacked package, note the trailing slash
    slot=$(adb shell getprop ro.boot.slot_suffix | tr -d '\r' | sed -n 's/^_//p')
+   # the getvar line appears twice on purpose, not a typo: this ABL often leaves the first
+   # command unanswered (rule 2), and a wrong slot silently retargets every partition below
    [ -n "$slot" ] || slot=$(fastboot getvar current-slot 2>&1 | sed -n 's/^current-slot: //p')
    [ -n "$slot" ] || slot=$(fastboot getvar current-slot 2>&1 | sed -n 's/^current-slot: //p')
    sed -e 's|^fastboot \$\* |fastboot |' -e 's|`dirname \$0`|'"$d"'|g' \
@@ -127,12 +129,11 @@ be estimated from each other:
    script ends with `set_active a`, hard-coded (`flash_all.sh` line 84 of the version above): the
    transformation changes that command's **form**, not its argument, so a device whose slotted images
    went to `_b` would be told to boot a slot whose firmware was never written. Set it to the slot you
-   wrote - the walk of 2026-11-10 ran `--set-active=b` for exactly that reason. And that version
-   contains **no `gpt` line at all**, so the note below did not apply to it; it matters only for a
-   package that carries one.
-
-   A `not found` for `gpt_backup$slot` on a device that has never re-partitioned is not a
-   failure: that partition does not exist yet, and this very run creates it.
+   wrote - the walk of 2026-11-10 ran `--set-active=b` for exactly that reason.
+   The other line to check is a `gpt` one, if your package carries it. This version carries **no
+   `gpt` line at all**, so none of the following applied to the walk. Where a `gpt` line is present,
+   a `not found` for `gpt_backup$slot` on a device that has never re-partitioned is not a failure:
+   that partition does not exist yet, and this very run creates it.
 
 2. Once LineageOS is installed, do **not** re-flash the firmware package's `dtbo` or
    `vendor_dlkm`. They belong to the stock kernel, while the ROM's `boot` carries a different
@@ -217,7 +218,7 @@ fastboot reboot recovery
 ```sh
 adb reboot recovery
 adb devices                  # must say sideload (rule 7); adb reboot sideload if not
-adb sideload "$ZIP"          # absolute path: adb stats it on the host, a relative path is an rc=1 no-op
+adb sideload "$ZIP"
 adb devices                  # if it still says sideload, push the next package right away
 adb sideload MindTheGapps-17.0.0-arm64-*.zip
 ```
@@ -233,10 +234,11 @@ Which brings one rule with it. **Do not restart the adb server to fix a connecti
 `sideload`.** Measured the other way round: `adb kill-server && adb start-server` on a healthy
 `sideload` turned it into `unauthorized`, and only the screen could put it back.
 
-**Two `unauthorized` readings look identical and are not the same size of problem.** The one met on
-*entering* recovery (measured 2026-11-10) means the adb function is not enabled yet, and **this
-recovery never shows an "allow USB debugging" prompt, in no state and under no circumstances** - so
-nothing will arrive on the screen however long you wait for it. The only way in is
+**`unauthorized` inside recovery has one fix, and no prompt will arrive for it.** The reading met
+on entering recovery (measured 2026-11-10) means the adb function is not enabled yet, and **this
+recovery shows no "allow USB debugging" prompt, in no state and under no circumstances** - unlike
+a booted system, where that popup is the normal next step. Nothing will reach the screen here
+however long you wait. The only way in is
 `Advanced → Enable ADB`, after which `adb devices` reads `sideload` directly. Re-entering recovery
 after a finished transfer is the same case, for the same reason. Nothing a host does reaches either
 one: a server restart is not a substitute for that menu item, and it cannot undo one.

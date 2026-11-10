@@ -1,8 +1,8 @@
 # LineageOS 24.0 for the Xiaomi Pad 5 Pro (elish)
 
 A self-built LineageOS 24.0 (Android 17, SDK 37) for the **Xiaomi Pad 5 Pro**
-codenamed `elish` (SoC SM8250 / `kona`, non-GKI kernel 4.19.325), carrying four changes
-over the stock LineageOS build for this device:
+codenamed `elish` (SoC SM8250 / `kona`, non-GKI kernel 4.19.325). It carries five changes
+over the stock LineageOS build for this device. Four of them change how the device behaves:
 
 | What | In one line | Documented in |
 | --- | --- | --- |
@@ -11,8 +11,8 @@ over the stock LineageOS build for this device:
 | **Root hiding that survives** | `verifiedbootstate=green` on both channels, SuSFS mount hiding, KernelSU's dynamic manager - verified without any root-management app installed. The kernel carries the mechanism; a KernelSU module carries the policy (docs/root.md says which is which). | [docs/root.md](docs/root.md) |
 | **Camera app usable on a landscape tablet** | The stock camera app letterboxes itself and puts its controls across the preview on a natural-landscape screen. It gets a right-hand sidebar and a per-app landscape lock. | [docs/camera.md](docs/camera.md) |
 
-Plus a small network fix (Chinese NTP and captive-portal addresses that no longer depend on
-the system language: [docs/network.md](docs/network.md)).
+The fifth is a small network fix: Chinese NTP and captive-portal addresses that no longer depend
+on the system language ([docs/network.md](docs/network.md)).
 
 Everything here is the difference from upstream, not a fork of LineageOS: five themes of
 source changes expressed as scripts plus generated patches, and a set of on-device
@@ -34,9 +34,9 @@ What is **not** here, deliberately:
   Get it from Xiaomi's official fastboot-package mirrors; the exact steps are in
   [docs/flash.md](docs/flash.md).
 - **GApps.** This build carries no Google packages; the setup documented here adds
-  MindTheGapps for Android 17 (`17.0.0`, matching the ROM's Android version). Because a
-  partition APK cannot be unpacked by the platform, the GApps choice also matters for one
-  root detail (see docs/root.md).
+  MindTheGapps for Android 17 (`17.0.0`, matching the ROM's Android version). That package, its
+  hash, and the one screen where it needs a finger, are in [docs/build.md](docs/build.md) and
+  [docs/flash.md](docs/flash.md).
 - **The manager APK.** The root management app is *not* preinstalled in this ROM (why:
   docs/root.md). The `ksud` binary this ROM ships is extracted from the APK of one manager
   release, `ReSukiSU v4.2.0-rc1` (that fork publishes as BakaSU now; see the table below),
@@ -76,11 +76,12 @@ Read these three lines before installing:
   ([`docs/flash.md`][flash]). Route A has been walked end to end from stock on 2026-11-10 - one pass,
   31 firmware commands, no failures - and that document carries the measured timings along with the
   two lines of the firmware package's own list that need checking before you run them.
-- Root is in the kernel, but **no manager APK is preinstalled**, and the manager is a real choice:
-  the upstream APK is recognised by a key the kernel carries (measured: crowned at
-  `signature_index=0`, nothing to register), while a manager built with your own key and package name
-  - the form root hiding is about - needs one registration command (`signature_index=255`), and
-  turning on `adb root` on a fresh install needs one setting first ([`docs/root.md`][root]).
+- Root is in the kernel, but **no manager APK is preinstalled**, and which manager you install is a
+  real choice. The upstream APK is recognised by a key the kernel carries: measured on a cold-installed
+  device, it was crowned at `signature_index=0` with nothing to register. A manager built with your own
+  signing key and package name - the form root hiding is about - needs one registration command, and is
+  then crowned at `signature_index=255`. Separately: `adb root` on a fresh install needs one setting
+  turned on first, and [`docs/root.md`][root] names it.
 
 What has been verified on the device, and how, is the checklist in [`docs/acceptance.md`][acc].
 
@@ -173,7 +174,7 @@ information comes from) and *the criteria* (the exact command and the exact expe
 value), because several plausible-looking readings on this device mean the opposite of
 what they appear to. [docs/acceptance.md](docs/acceptance.md) also lists the readings that
 must **not** be judged at all under certain conditions - a flat-lying tablet, an untethered
-clock, a screen that is off. If it is not one of those, open an issue with the build
+clock, a screen that is off. If your symptom is not one of those, open an issue with the build
 identifiers and the actual command output: the issue template asks for the few facts that
 make a device report diagnosable.
 

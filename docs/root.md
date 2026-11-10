@@ -30,7 +30,8 @@ and they are not a criterion either - `ro.build.type` has read `user` on one boo
 
 The switch does not produce a `su`. That is KernelSU's, and it follows its own rule: until the shell
 uid is granted in a manager, `command -v su` returns nothing and `su -c id` fails with 127 even with
-Rooted debugging on. The two routes are covered at the end of this file.
+Rooted debugging on. The two routes are separate, and each is covered where it is used:
+`adb root` under *Root hiding, and how it is verified*, `su` at the end of this file.
 
 A third route exists and is worth naming because it looks like the answer. The KernelSU `adb_root`
 feature (`kernel/feature/adb_root.c`) injects `LD_PRELOAD=/data/adb/ksu/lib/libadbroot.so` into adbd,
@@ -237,7 +238,8 @@ hiding**. Three of the readings people check for hiding come from things outside
   The assignment is not decoration: `pm path` prefixes each line with `package:`, a split APK lists
   several files, and `adb shell` appends `\r`. The kernel accepts only a file named `base.apk`.
 
-  **This is not circular, and it is not close on this build.** `only_root()` reads
+  **There is no circularity here: registration does not need root hiding working first.**
+  `only_root()` reads
   `current_uid()`, and `adb root` supplies uid 0 without any manager being involved - provided the
   Rooted debugging switch from the top of this page is on, because that is what `adb root` answers
   to. The SELinux half
@@ -290,9 +292,9 @@ hiding**. Three of the readings people check for hiding come from things outside
   six needs nothing: measured, the upstream APK was crowned at `signature_index=0` while
   `dynamic-manager get` still answered `ENODATA`. So judge recognition by the reading
   (`dmesg | grep -i crowning`), not by whether the command was run.
-- Both live under `/data` (`/data/adb/modules`, `/data/adb/ksu/.dynamic_manager`), so a
-  **factory reset or Format data removes them** and the readings go back to what a ROM-only
-  device shows. Nothing in the image is wrong at that point; the setup simply has to be
+- **The module and the registration both live under `/data`** (`/data/adb/modules`,
+`/data/adb/ksu/.dynamic_manager`), so a **factory reset or Format data removes them** and the
+readings go back to what a ROM-only device shows. Nothing in the image is wrong at that point; the setup simply has to be
   repeated.
 
 So: after flashing the ROM alone, expect `orange` and no crowning line. The two things under
@@ -305,7 +307,7 @@ kernel's list does not need.
 The hiding above has a nameable edge: it covers the kernel command line, the properties that mirror
 them, and the mount view. Two nearby things sit outside it:
 
-- **KeyStore attestation**, measured on this device now ([acceptance.md](acceptance.md) section 10).
+- **KeyStore attestation**, measured on this device ([acceptance.md](acceptance.md) section 10).
   An app asks for a signed certificate, and that certificate carries its own boot-state fields, so
   rewriting properties does not reach it: with `spoof_cmdline=1` enabled and every reading an
   unprivileged shell can take saying `green` / `1` / `enforcing`, the attestation still answered
@@ -351,5 +353,6 @@ in `ksud`; the grant is a UI action. Do not read this as a regression.
 Bare commands, with the expected readings, in [acceptance.md](acceptance.md) sections 6 and
 10. The line that summarizes this document: on a steady-state boot, `dmesg | grep -c "for init
 executing ksud"` equals 3, and `sha256sum /data/adb/ksud /product/bin/ksud` gives the same
-hash twice. Both readings are time-sensitive in the way described in section 4.3, so on a
-device that has been up for hours the second one is the proof and the first is a bonus.
+hash twice. Both readings are time-sensitive in the way described under *What the ROM delivers* above - the
+kernel ring buffer wraps - so on a device that has been up for hours the second one is the proof
+and the first is a bonus.

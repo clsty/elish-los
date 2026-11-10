@@ -47,12 +47,18 @@ Then the two behavioural checks - both need an actual network connection, and bo
 "do not judge if the precondition is missing":
 
 ```sh
-adb shell dumpsys connectivity | grep -oE "https?://[A-Za-z0-9._/-]*generate_204" | sort -u
+adb shell dumpsys network_stack | grep -oE "https?://[A-Za-z0-9._/-]*generate_204" | sort -u
 # expect http://connect.rom.miui.com/generate_204
 
 adb shell dumpsys time_detector | grep -iE "ntp|Network suggestion|systemClockConfidence"
 # expect the suggestion history to name ntp.aliyun.com, and systemClockConfidence() != 0
 ```
+
+The probe belongs to **`network_stack`, not `connectivity`**: on this Android version the NetworkStack
+service owns it, and `dumpsys connectivity` holds no `generate_204` and no `captive`/`portal` line at
+all (measured 2026-11-10). Grepping the wrong service returns nothing, which looks exactly like a
+missing endpoint. `dumpsys network_stack` also carries the probe's own result -
+`PROBE_HTTP http://connect.rom.miui.com/generate_204 ... ret=204` - which is the stronger evidence.
 
 With no default route (`ip route` shows none), the expected readings are
 `Network suggestion history: {Empty}` and `systemClockConfidence()=0`. Those are an unmet

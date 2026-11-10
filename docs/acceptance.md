@@ -7,11 +7,13 @@ debugging switch, which [root.md](root.md) explains at its top).
 
 One convention worth knowing before you run anything: a command that greps for an expected
 string exits **1** when the string is absent, which is a pass criterion here, not a script
-failure. `grep -c` prints `0` and also exits 1. The few blocks that are not bare `adb` need a
-host with `python3`, `pillow`, `ffmpeg`, `numpy` and `scipy` (the sensor check in section 3 and
-the mask detector in section 5). Section 3 asks for one more thing: `tools/framecheck` is built
-from the prebuilts inside a LineageOS tree, so if you downloaded this ROM without building it, use
-the `dumpsys sensorservice` reading section 4 gives for the same poses instead.
+failure. `grep -c` prints `0` and also exits 1. The few blocks that are not bare `adb` need
+`python3` on the host; two of them need one more binary each - `ffmpeg` for the mask detector in
+section 5, `openssl` for the attestation check in section 10 (a LineageOS tree's
+`prebuilts/build-tools` copy is found on its own, or set `ELISH_OPENSSL`). Section 3 asks for one
+more thing: `tools/framecheck` is built from the prebuilts inside a LineageOS tree, so if you
+downloaded this ROM without building it, take the `dumpsys sensorservice` reading section 4 gives for
+the same poses - and check that block's `wall=` timestamp first, for the reason section 4 states.
 
 Read the last section too: several readings on this device are **not judgements** under
 certain conditions, and mistaking one for a failure has cost more time than any real bug.
@@ -186,11 +188,10 @@ adb exec-out screencap -p > v_43.png       # state 1: the ratio in effect (4:3 a
 adb shell uiautomator dump /sdcard/q.xml >/dev/null
 adb shell cat /sdcard/q.xml | tr '>' '\n' | grep -E 'aspectRatioButton|cameraModeSelector' \
   | grep -o 'resource-id="[^"]*"\|bounds="\[[0-9,]*\]\[[0-9,]*\]"' | paste - -
-adb shell input tap "$X" "$Y"              # centre of the aspect-ratio button, then pick 16:9
-adb exec-out screencap -p > v_169.png
 ```
 
-Assign `$X` and `$Y` from the bounds you just printed, using the button's centre:
+Assign the button's centre to `$X` and `$Y` from the bounds that dump just printed, then tap it and
+pick 16:9:
 
 ```sh
 X=$(adb shell cat /sdcard/q.xml | tr '>' '\n' | grep aspectRatioButton \
@@ -201,6 +202,8 @@ Y=$(adb shell cat /sdcard/q.xml | tr '>' '\n' | grep aspectRatioButton \
   | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1 \
   | sed 's/.*\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \2 \3 \4/' \
   | awk '{print int(($2+$4)/2)}')
+adb shell input tap "$X" "$Y"              # the aspect-ratio button, then pick 16:9
+adb exec-out screencap -p > v_169.png
 ```
 
 The two remaining states are camera **modes**, reached by swiping the mode strip (its bounds are

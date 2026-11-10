@@ -159,7 +159,7 @@ Two conditions the script enforces, because ignoring them turns a pass into a fi
   separately.
 
 Absolute direction is a separate, physical check - walk the four edges, one per reading, and
-compare against what the pose should be (see [acceptance.md](acceptance.md)). No amount of
+compare against what the pose should be ([acceptance.md](acceptance.md) section 4). No amount of
 internal consistency proves that the direction called 0 is the one you intend.
 
 **5. Camera sensor orientation, judged by facing.**

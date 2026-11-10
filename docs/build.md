@@ -43,8 +43,8 @@ Two things here are wrong in ways that do not look wrong:
 
 The vendor trees carry the prebuilt blobs; nothing here extracts them from stock firmware.
 Everything this document describes was built and tested on a device whose firmware is
-`OS1.0.2.0.TKYCNXM`; the flash procedure does not touch firmware partitions, and no other
-firmware baseline has been measured.
+`OS1.0.2.0.TKYCNXM`. The normal iteration (Route B) leaves the firmware partitions alone, so that
+baseline carries through every update; no other firmware baseline has been measured.
 
 ## 2. The three files that are not in this repository
 
