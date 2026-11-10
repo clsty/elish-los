@@ -84,10 +84,16 @@ Internal consistency cannot prove that direction zero is the direction you inten
 
 | Pose | Command | Expected |
 | --- | --- | --- |
-| Each of the four edges down, once each | `adb shell 'dumpsys sensorservice | grep -iE "gravity\|accelerometer"'` or read the framecheck SNAP line | the gravity vector points down the edge that is physically down |
+| Each of the four edges down, once each | `adb shell 'dumpsys sensorservice | grep -iE "gravity|accelerometer"'` or read the framecheck SNAP line | the gravity vector points down the edge that is physically down |
 | Landscape, charger right | `adb shell 'dumpsys window | grep -m1 -o "mRotation=[0-9]*"'` | `mRotation=0` |
 | Rotate to the other landscape | the same command | `3` (or `1`), and the UI follows |
 | Landscape, **burst** of several photos | `adb shell 'dumpsys media.camera'` + EXIF of each saved frame | every photo's EXIF `Orientation` is `1`. One photo proves nothing: the symptom was two-state |
+
+One spelling note for greps that run **on the device** (inside `adb shell '…'`): its grep is toybox,
+which has no `\|` alternation in either syntax - BRE rejects it and ERE reads it as a literal bar -
+so both `"a\|b"` forms match nothing and look like an empty result rather than an error. Write
+`-E "a|b"`. Greps after an unquoted `adb shell cat …` run on the host, where GNU grep accepts `\|`,
+which is why the blocks in section 5 are spelled that way and are correct.
 
 ## 5. Camera app
 
