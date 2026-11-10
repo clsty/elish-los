@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Exists only to be a client that asks the keystore for an *attested* key, which no tool on
+     the device can do (see AttestCheck.java). Draws nothing, requests no permission, uses no
+     network, and deletes the key it created before it finishes. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.attestcheck">
+
+    <application android:label="AttestCheck">
+        <activity
+            android:name=".AttestCheck"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
