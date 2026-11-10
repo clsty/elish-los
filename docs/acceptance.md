@@ -458,14 +458,13 @@ you go at it by hand:
 
 This is the kernel's side of the ledger, and nothing else here touches it. The kernel in `boot.img` is
 built from these sources, and the branch this device used before (`Astide`) carried a reboot defect that
-reproduced every single time, along with changes to shutdown and Bluetooth. So these five rows exist to
+reproduced every single time, along with changes to shutdown and Bluetooth. So these four rows exist to
 catch a regression that no property or dumpsys reading would show.
 
 | Item | Judgement | Status |
 | --- | --- | --- |
 | Reboot to boot | one measurement, **≤120 s** and no power-key hold needed. One run is the judgement, *not* best-of-three: what this guards reproduces every time, so "three runs, one pass" would read looser than the defect | measured 2026-11-10 on the cold-installed build: **36 s** (two further runs under the older ×3 wording: 37 s and 35 s) |
-| Software power-off really cuts power | after ~60 s the screen is dark and the device no longer enumerates on USB at all | judged by the owner's own test on an earlier build (2026-11-04); not re-run on this build |
-| Power-off entered from recovery | the same two readings, entered from recovery's `Power off` | **open.** Its regression target is kernel-side, so only a self-built kernel makes it a valid reading - and this build is one |
+| Software power-off really cuts power | after ~60 s the screen is dark and the device no longer enumerates on USB at all | judged by the owner's own test on an earlier build (2026-11-04); not re-run on this build. Power-off entered from recovery's menu was dropped as a separate check (2026-11-10): it asks for exactly these two readings, only reached from a different entry point, so it was redundant rather than unmeasured |
 | Drain: 60 min off, 60 min with the screen off | ≤1% and ≤2% respectively, and no growth in `suspend_stats`' `failed_resume*` | waived by the owner's judgement (2026-11-04): the power-off row above already proves the power-off path, and the two hour-long windows were judged to add nothing |
 | Bluetooth controller | pairs, and reconnects after a reconnect of the link; when it fails, the evidence route is the HCI log (developer options -> Bluetooth HCI snoop) | measured by the owner's own test on an earlier build (2026-11-04), once on a fresh `/data` (a true first pairing) and once as a reconnect |
 
@@ -502,4 +501,3 @@ describes, each with its reason:
 | Item | Why it is not judged here |
 | --- | --- |
 | `su` granting | granting happens in a root manager's own UI, and the default form ships no manager (`ksud help` on this build lists no `grant` subcommand), so no command in this document can perform it - and installing a manager changes the unit under test. What *is* measured is where a grant lands and what follows: `/data/adb/ksu/.allowlist`, keyed by package name, loaded once at boot, and it survives reinstalling the manager under the same name (section 6). The test device was granted for `com.android.shell` and that grant was read back |
-| Power-off entered from recovery | the one open row of section 11. It needs an eye on the device (is the screen truly dark, does it come back), and it only says anything on a self-built kernel |
