@@ -7,7 +7,10 @@ repository, and the four environment facts that cost the most time to discover b
 ## 1. The tree
 
 `elish` is not a LineageOS-supported device, so there is no `lineage_elish` entry in the
-default manifest. Sync the platform and add the device, vendor and kernel projects explicitly:
+default manifest. Sync the platform as LineageOS describes, then **add these projects as a local
+manifest** - write the block below to `.repo/local_manifests/elish.xml` in the synced tree. It
+*adds* projects; it does not replace the platform manifest, and a manifest holding only these six
+projects syncs only these six:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -105,13 +108,16 @@ what made the difference between a rebuild and a wasted afternoon.
 
 ## 4. Build, then verify
 
+The first two lines run **from the top of this repository** - `tools/check-repo.sh` lives here,
+not in the tree - and the last four inside the tree:
+
 ```sh
-sh patches/apply-all.sh /path/to/los24        # replay every change; idempotent
-cd /path/to/los24
+sh patches/apply-all.sh /path/to/los24        # this repository: replay every change; idempotent
+sh tools/check-repo.sh                        # this repository: optional self-checks
+cd /path/to/los24                             # from here, inside the synced tree
 source build/envsetup.sh
 lunch lineage_elish-cp2a-userdebug            # the target this project's builds used
 mka bacon
-sh tools/check-repo.sh                        # optional: this repository's own self-checks
 ```
 
 Take the zip by its dated name (`lineage-24.0-<date>-UNOFFICIAL-elish.zip`), not by modification

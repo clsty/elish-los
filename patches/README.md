@@ -99,18 +99,22 @@ git -C "$TREE/device/xiaomi/elish" diff > /tmp/by-scripts.diff
 # wipe that project, then apply only the generated patch:
 git -C "$TREE/device/xiaomi/elish" reset -q && git -C "$TREE/device/xiaomi/elish" checkout -- . \
   && git -C "$TREE/device/xiaomi/elish" clean -fdq
-git -C "$TREE/device/xiaomi/elish" apply patches/generated/device-xiaomi-elish.patch
+git -C "$TREE/device/xiaomi/elish" apply "$REPO/patches/generated/device-xiaomi-elish.patch"
 git -C "$TREE/device/xiaomi/elish" ls-files --others --exclude-standard \
   | xargs -r -n1 git -C "$TREE/device/xiaomi/elish" add -N --
 git -C "$TREE/device/xiaomi/elish" diff > /tmp/by-patch.diff
 diff /tmp/by-scripts.diff /tmp/by-patch.diff             # must differ only in material
 ```
 
-Script state and patch state must agree byte for byte except for material (`ksu/bin/ksud` and
-anything else `MAT_SKIP` covers). Material is what the scripts place from outside the tree: by
+Script state and patch state must agree byte for byte except for material - `ksu/bin/ksud` and
+anything else `MAT_SKIP` covers. Material is what the scripts place from outside the tree: by
 default it is read from `../material` relative to this directory, which `KSU_MATERIAL_DIR`
 overrides. That comparison is the reason the published patches can be trusted without
 re-deriving them.
+
+One consequence of running the block: its `git clean -fdq` deletes that material from the project,
+so re-run `sh apply-all.sh "$TREE"` afterwards to put the tree back in a buildable state. The
+comparison is over by then, so the replay does not change what was verified.
 
 ## Form switch
 

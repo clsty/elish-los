@@ -21,6 +21,10 @@ adb shell getprop ro.product.device            # elish - this guards against fla
 adb shell getprop ro.boot.slot_suffix          # the booting slot; this is the only slot truth
 ```
 
+An empty `adb devices` here is not a cable problem to chase in this document: a stock system
+ships USB debugging off, and a line reading `unauthorized` means that system's own confirmation prompt
+has not been accepted. Both are settled in the stock OS's settings.
+
 `fastboot getvar current-slot` is **not** a slot truth on this device: its ABL has been
 observed to answer `a` consistently in both the stock firmware and after flashing, and once
 `b`. Use it only to decide "is it in fastboot at all". To decide *which ROM is running*, read
@@ -100,6 +104,8 @@ be estimated from each other:
    (`crclist`, `sparsecrclist`, `rescue`, `imagefv`):
 
    ```sh
+   # this block works from either state: the getprop line answers when the system is booted, and
+   # when it does not, the device is in fastboot and the getvar fallbacks answer instead
    d=/path/to/elish_images_OS1.0.2.0.TKYCNXM_13.0/   # the unpacked package, note the trailing slash
    slot=$(adb shell getprop ro.boot.slot_suffix | tr -d '\r' | sed -n 's/^_//p')
    # the getvar line appears twice on purpose, not a typo: this ABL often leaves the first
@@ -119,9 +125,10 @@ be estimated from each other:
    retargets every slotted partition in the list. If the device no longer boots, use the `getvar`
    fallback and read the derived list twice.
 
-   **Read that list before running it, then run it one line at a time.** It is a list of commands, not
-   a script to hand to `sh`: a wrapper swallows the per-partition output, and that output is the only
-   diagnosis a failed flash gives. Paste one line, read what it printed, then paste the next. When a
+   **Reboot into the firmware's fastboot with the hardware keys (rule 6) first: every line below is
+   a fastboot command.** Then read the list before running it, and run it one line at a time. It is a
+   list of commands, not a script to hand to `sh`: a wrapper swallows the per-partition output, and
+   that output is the only diagnosis a failed flash gives. Paste one line, read what it printed, then paste the next. When a
    line fails, re-send just that line - resending a partition that already succeeded is harmless
    (rule 3), which is what makes the retry safe however often it turns out to be needed.
 
@@ -157,7 +164,9 @@ be estimated from each other:
    for s in a b; do fastboot flash boot_$s boot.img; fastboot flash vendor_boot_$s vendor_boot.img; done
    ```
 
-5. Reboot to recovery, `Wipe → Format data/factory reset` (type yes), `Advanced → Enable ADB`,
+5. `fastboot reboot recovery` - after step 4 the tablet is in fastboot; use `adb reboot recovery`
+   instead if it is booted. Then everything is on the screen: `Wipe → Format data/factory reset`
+   (type yes), `Advanced → Enable ADB`,
    `Apply update → Apply from ADB`, sideload the ROM, then **in the same session** sideload
    GApps - the only hard condition is not to boot the system before GApps are in - then
    `Reboot system now`.
@@ -195,6 +204,7 @@ path is an `rc=1` no-op.
 ```sh
 ZIP=/path/to/lineage-24.0-20260101-UNOFFICIAL-elish.zip  # the dated name, not lineage_elish-ota.zip
 OUT=/path/to/los24/out/target/product/elish              # optional step only
+GAPPS_DIR=/path/to/packages                              # the directory holding the GApps zip
 ```
 
 **Optional, and only when the kernel changed: give *both* slots the same `boot` and
@@ -220,7 +230,7 @@ adb reboot recovery
 adb devices                  # must say sideload (rule 7); adb reboot sideload if not
 adb sideload "$ZIP"
 adb devices                  # if it still says sideload, push the next package right away
-adb sideload MindTheGapps-17.0.0-arm64-*.zip
+adb sideload "$GAPPS_DIR"/MindTheGapps-17.0.0-arm64-*.zip   # $GAPPS_DIR is where that zip is; keep it absolute
 ```
 
 `failed to read command: Success` at the end of a sideload is normal. Between the two transfers the
@@ -250,8 +260,10 @@ its own key, which is not one of the keys recovery verifies against, so when tha
 recovery reports the mismatch and waits for confirmation - press **`Yes`** to continue the install
 (wake the screen with a short power-key press if it went dark). It is a yes/no prompt, not a licence
 page; there is no licence page anywhere in this flow. That is the only point in the whole flow where
-someone has to be next to the tablet. Then
-`Reboot system now`. The GApps package this ROM was tested with - file name, hash and release page -
+someone has to be next to the tablet - within this route, and provided the two transfers go in
+one recovery session: answer `Yes` to the restart question above and `Advanced → Enable ADB` needs
+the screen again. Route A is a different matter; its wipe and menu steps are all on the screen.
+Then `Reboot system now`. The GApps package this ROM was tested with - file name, hash and release page -
 is the row marked GApps in [build.md](build.md).
 
 **After first boot: install a manager.** The image delivers `ksud` and no manager APK, so root has

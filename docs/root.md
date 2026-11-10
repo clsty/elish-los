@@ -230,7 +230,8 @@ hiding**. Three of the readings people check for hiding come from things outside
   list needs one extra command, once per install, run **on the tablet as root**:
 
   ```sh
-  MANAGER_PKG=com.example.manager        # the package name of the manager you installed
+  MANAGER_PKG=com.example.manager        # replace with the package name of your manager
+  # left as a placeholder, pm path answers nothing, APK is empty and set-apk fails on it
   APK=$(adb shell pm path "$MANAGER_PKG" | grep -m1 base.apk | cut -d: -f2- | tr -d '\r')
   adb shell su -c "/data/adb/ksud kernel dynamic-manager set-apk $APK"
   ```
@@ -329,7 +330,7 @@ them, and the mount view. Two nearby things sit outside it:
 | --- | --- | --- |
 | Locked-state indication | the `susfs4ksu` module | `verifiedbootstate=green` **both** in `/proc/cmdline` **and** in `getprop ro.boot.verifiedbootstate`; `ro.boot.flash.locked=1`, `ro.boot.veritymode=enforcing`. The property half is the module's default; the cmdline half needs `spoof_cmdline=1` |
 | SuSFS mount hiding | kernel SuSFS + that module | the module listed enabled by `/data/adb/ksud module list`; `ksu_susfs` present in `/data/adb/ksu/bin` |
-| Manager recognition | the manager APK; `set-apk` if its signing key is not one of the kernel's six | `dmesg | grep -i crowning` shows exactly one `Crowning manager: <pkg>` line, and `SYS_SECCOMP, syscall 142` count is 0 (a manager that was not crowned dies on `reboot(2)`) |
+| Manager recognition | the manager APK; `set-apk` if its signing key is not one of the kernel's six | `dmesg | grep -i crowning` (as root: uid 2000 gets `dmesg: klogctl: Permission denied`) shows exactly one `Crowning manager: <pkg>` line, and `adb logcat -d | grep -c "SYS_SECCOMP, syscall 142"` is 0 - that line is in the log buffer, not in `dmesg`; a manager that was not crowned dies on `reboot(2)` |
 | Not hidden: KeyStore attestation | the vendor Keymaster HAL (`/vendor/bin/hw/android.hardware.keymaster@4.0-service-qti`, which holds `/dev/qseecom`), not this image | `python3 tools/attestcheck/check.py` reports `deviceLocked=False` and `verifiedBootState=UNVERIFIED` **while the first row reports `green`** - the two disagree on purpose, and that is the test of whether the first row's `green` is the module or the machine |
 
 The index in that line says which of the two paths registered it: 255 is the reserved slot for a

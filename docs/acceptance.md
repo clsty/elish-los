@@ -10,10 +10,16 @@ string exits **1** when the string is absent, which is a pass criterion here, no
 failure. `grep -c` prints `0` and also exits 1. The few blocks that are not bare `adb` need
 `python3` on the host; two of them need one more binary each - `ffmpeg` for the mask detector in
 section 5, `openssl` for the attestation check in section 10 (a LineageOS tree's
-`prebuilts/build-tools` copy is found on its own, or set `ELISH_OPENSSL`). Section 3 asks for one
-more thing: `tools/framecheck` is built from the prebuilts inside a LineageOS tree, so if you
-downloaded this ROM without building it, take the `dumpsys sensorservice` reading section 4 gives for
-the same poses - and check that block's `wall=` timestamp first, for the reason section 4 states.
+`prebuilts/build-tools` copy is found on its own, or set `ELISH_OPENSSL`).
+
+**Two sections need a source tree, and they are the two that need an app.** `tools/framecheck`
+(section 3) and `tools/attestcheck` (section 10) are built from the prebuilts inside a LineageOS tree
+by `tools/mkapk.sh`, and the release carries no APK. If you only downloaded the release, run
+everything else and treat those two sections as not covered for your device. In section 4 that costs
+the gravity column: nothing on this build subscribes to gravity by itself - that is the reason
+framecheck exists - so the service reading below holds a gravity value only if something has
+subscribed, and its `wall=` timestamp says when. The rotation and EXIF rows of section 4 are bare
+`adb` and stay available.
 
 Read the last section too: several readings on this device are **not judgements** under
 certain conditions, and mistaking one for a failure has cost more time than any real bug.
@@ -110,10 +116,53 @@ Internal consistency cannot prove that direction zero is the direction you inten
 
 | Pose | What to read | Expected |
 | --- | --- | --- |
-| Each of the four edges down, once each | the gravity vector (the framecheck `SNAP` line is the live one; see the two reading notes below) and `mCurrentRotation` | the axis that reads `+1 g` is the edge physically **up**, and the rotation index is the one that pose deserves |
+| Each of the four edges down, once each | the gravity vector and `mCurrentRotation`; both commands are under *The two readings* below | the axis that reads `+1 g` is the edge physically **up**, and the rotation index is the one that pose deserves |
 | Landscape, charger right | `adb shell 'dumpsys window' \| grep -m1 -o "mCurrentRotation=[A-Z_0-9]*"` | `ROTATION_0` |
 | Rotate to the other landscape | the same command | `ROTATION_180`, and the UI follows |
-| Landscape, **burst** of several photos | EXIF of each saved frame (`/sdcard/DCIM/Camera`) | every photo's EXIF `Orientation` is `1`. One photo proves nothing: the symptom was two-state |
+| Landscape, **burst** of several photos | EXIF `Orientation` of each saved frame; the command is under *The two readings* below | every photo's EXIF `Orientation` is `1`. One photo proves nothing: the symptom was two-state |
+
+**The two readings that table asks for.** Neither is one obvious command, and each has a way to read
+silently wrong:
+
+```sh
+# Gravity, in the device frame, while framecheck is subscribed: its SNAP line is the live value. The
+# slot keys are "<type>#<n>:<name>:<vendor>" with spaces turned into underscores, so gravity is the
+# type-9 slot - grep for 9#0 rather than for the word, because the name here is "gravity  Non-wakeup".
+# The first three numbers after the key are x, y, z.
+adb logcat -d -s FrameCheck:I | grep 'SNAP|' | tail -1 | tr '|' '\n' | grep '^9#0:'
+# The same value from the service, as left by whoever subscribed to it last:
+adb shell 'dumpsys sensorservice' | tr -d '\r' | grep -A 11 -E 'gravity  Non-wakeup: last' \
+  | grep 'ts=' | tail -1
+# The table below also quotes device_orient, the framework's own settled enumeration: the same dump,
+# the "device_orient  Wakeup: last" block, same shape. It is on-change, so the freshness rule below
+# matters doubly there.
+```
+
+`-A 11` and not `-A 4`: each of those blocks holds up to ten events, **oldest first**, so a short
+window reads the oldest one as if it were the newest. Check the `wall=` timestamp of whatever you
+read, for the reason in the second note below. The two agree when both are live: measured 2026-11-10,
+`9#0:gravity__Non-wakeup:qualcomm=0.15019,1.52399,9.68634` from the app and
+`10 (ts=…, wall=19:41:59.059) 0.15, 1.52, 9.69` from the service, one tablet lying flat.
+
+```sh
+# EXIF Orientation is tag 274 of IFD0, and it is a SHORT: read it as 32 bits and a value of 1 comes
+# back as 65536. No host tool is needed - four files, four lines of output, each "name 1".
+d=$(mktemp -d)
+for f in $(adb shell ls /sdcard/DCIM/Camera | tr -d '\r' | tail -4); do
+  adb exec-out cat "/sdcard/DCIM/Camera/$f" > "$d/$f"
+  python3 - "$d/$f" <<'PY'
+import struct, sys
+b = open(sys.argv[1], 'rb').read()
+a = b.find(b'Exif\x00\x00') + 6                    # the TIFF header starts here
+o = '<' if b[a:a+2] == b'II' else '>'
+ifd = a + struct.unpack(o + 'I', b[a+4:a+8])[0]
+for k in range(struct.unpack(o + 'H', b[ifd:ifd+2])[0]):
+    p = ifd + 2 + 12 * k
+    if struct.unpack(o + 'H', b[p:p+2])[0] == 274:
+        print(sys.argv[1].split('/')[-1], struct.unpack(o + 'H', b[p+8:p+10])[0])
+PY
+done
+```
 
 Measured 2026-11-10 on the cold-installed build, four edges, one pass through all of them. Gravity is
 the mean of the settled frames of each pose (24-28 frames per pose, sampled at 400 ms), and
@@ -157,10 +206,12 @@ adb shell dumpsys platform_compat | grep -o "ChangeId(236283604[^)]*packageOverr
 # expect org.lineageos.aperture=true
 ```
 
-Geometry - lock the rotation, cold-start, read bounds, then restore:
+Geometry - lock the rotation, cold-start, read bounds, then restore. With auto-rotate off,
+`user_rotation` is the display rotation, so `0` is natural landscape (the measured mapping, and why
+locking to the app's own direction is the safer choice, are in [camera.md](camera.md)):
 
 ```sh
-adb shell 'settings put system accelerometer_rotation 0; settings put system user_rotation 3'
+adb shell 'settings put system accelerometer_rotation 0; settings put system user_rotation 0'
 adb shell am force-stop org.lineageos.aperture
 adb shell input keyevent KEYCODE_WAKEUP; adb shell wm dismiss-keyguard
 adb logcat -c
@@ -176,49 +227,59 @@ adb shell 'settings put system accelerometer_rotation 1; settings put system use
 Pass: `mDisplayRotation=ROTATION_0`; `viewFinder` bounds `[0,0][2133,1600]`; the sidebar
 starting at `x=2133`; the shutter inside that sidebar; and zero "Ignoring …" lines.
 
-The mask, four states (16:9 and VIDEO draw it, 4:3 and SCAN do not) - detected, not eyeballed:
+The mask, four states - 16:9 and VIDEO draw it, 4:3 and SCAN do not. Two things about this screen are
+worth knowing before tapping anything, both measured 2026-11-10 with the rotation locked:
+
+- The **ratio** control is not on the main screen. It sits in the PRO panel that `Pro settings`
+  (`id/proButton`) opens as `secondaryTopBarLayout`, and **the panel closes by itself when the mode
+  changes** - so switch modes first, and set the ratio afterwards. `id/aspectRatioButton` toggles
+  between exactly two values, 4:3 and 16:9, and its own `text` is the current one; the choice survives
+  a restart, so read that label rather than assuming where you start.
+- The **modes** are a vertical column in the sidebar (`cameraModeButtonsLinearLayout`) whose entries
+  are **tapped**. A swipe does nothing here: two vertical swipes inside the strip left the highlight on
+  `PHOTO` both times. Locked to natural landscape all three entries stay on screen, so any one of them
+  can be tapped directly.
 
 ```sh
+# Centre of the first element matching a pattern - a resource-id, or the text the app shows.
+centre() { adb shell cat /sdcard/q.xml | tr '>' '\n' | grep -E "$1" \
+  | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1 \
+  | sed 's/.*\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \2 \3 \4/' \
+  | awk '{print int(($1+$3)/2), int(($2+$4)/2)}'; }
+# `uiautomator dump` fails now and then while the preview is animating, and a failed dump leaves the
+# PREVIOUS file where it is, which looks exactly like "this button does not exist". Remove it first:
+# then a missing file means a failed dump (run the line again), never a missing button.
+dump() { adb shell rm /sdcard/q.xml >/dev/null 2>&1; adb shell uiautomator dump /sdcard/q.xml >/dev/null 2>&1; }
+
+# Re-lock the rotation: the geometry block above hands rotation back to the sensors at its last line,
+# and a picture taken with the tablet at an angle gives a portrait-shaped window.
+adb shell 'settings put system accelerometer_rotation 0; settings put system user_rotation 0'
 adb shell am force-stop org.lineageos.aperture
 adb shell input keyevent KEYCODE_WAKEUP; adb shell wm dismiss-keyguard
 adb shell am start -n org.lineageos.aperture/.CameraActivity >/dev/null; sleep 9
-adb exec-out screencap -p > v_43.png       # state 1: the ratio in effect (4:3 after a first boot)
-# The ratio and mode controls are reached through the secondary bar; read its bounds rather than
-# hard-coding a coordinate, since the point that matters is "what did the app actually lay out":
-adb shell uiautomator dump /sdcard/q.xml >/dev/null
-adb shell cat /sdcard/q.xml | tr '>' '\n' | grep -E 'aspectRatioButton|cameraModeSelector' \
-  | grep -o 'resource-id="[^"]*"\|bounds="\[[0-9,]*\]\[[0-9,]*\]"' | paste - -
+
+dump; adb shell cat /sdcard/q.xml | tr '>' '\n' | grep 'id/viewFinder' | grep -o 'bounds="[^"]*"'
+# expect bounds="[0,0][2133,1600]" - the detector below crops exactly that preview, so a picture
+# taken while the window is 1600x2560 cannot be read by it at all
+
+dump; adb shell input tap $(centre 'id/proButton'); sleep 2; dump
+adb shell cat /sdcard/q.xml | tr '>' '\n' | grep aspectRatioButton | grep -o 'text="[^"]*"'
+adb exec-out screencap -p > v_first.png           # the label above names the state in this picture
+adb shell input tap $(centre 'id/aspectRatioButton'); sleep 2; dump
+adb shell cat /sdcard/q.xml | tr '>' '\n' | grep aspectRatioButton | grep -o 'text="[^"]*"'
+adb exec-out screencap -p > v_second.png          # one toggle later, so this is the other ratio
+
+for m in VIDEO SCAN; do
+  adb shell input tap $(centre "text=\"$m\""); sleep 2; dump
+  echo "$m: highlight $(centre cameraModeHighlightButton) / entry $(centre "text=\"$m\"")"
+  adb exec-out screencap -p > "v_$(echo "$m" | tr 'A-Z' 'a-z').png"
+done
 ```
 
-Assign the button's centre to `$X` and `$Y` from the bounds that dump just printed, then tap it and
-pick 16:9:
-
-```sh
-X=$(adb shell cat /sdcard/q.xml | tr '>' '\n' | grep aspectRatioButton \
-  | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1 \
-  | sed 's/.*\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \2 \3 \4/' \
-  | awk '{print int(($1+$3)/2)}')
-Y=$(adb shell cat /sdcard/q.xml | tr '>' '\n' | grep aspectRatioButton \
-  | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1 \
-  | sed 's/.*\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \2 \3 \4/' \
-  | awk '{print int(($2+$4)/2)}')
-adb shell input tap "$X" "$Y"              # the aspect-ratio button, then pick 16:9
-adb exec-out screencap -p > v_169.png
-```
-
-The two remaining states are camera **modes**, reached by swiping the mode strip (its bounds are
-`cameraModeSelectorLayout`, printed above) leftwards along its own axis, then capturing:
-
-```sh
-adb shell input swipe "$((X-20))" "$Y" "$((X-900))" "$Y" 300    # swipe the strip; X,Y are any point on it
-adb exec-out screencap -p > v_video.png
-# capture twice if you are not sure the mode took: check the strip's selected entry in a fresh dump
-# swipe back to PHOTO, then to SCAN the same way:
-adb exec-out screencap -p > v_scan.png
-```
-
-If a mode is not reached, leave that row out rather than reading it as `none`: an
-unreached state and a state without a mask produce the same output.
+The two numbers on that `echo` line are the judgement of "did the mode take": the highlight moves
+onto the entry, so **equal centres mean the mode is live**. If a mode is not reached, leave that row
+out rather than reading it as `none`: an unreached state and a state without a mask produce the same
+output.
 
 ```sh
 python3 - <<'PY'
@@ -229,19 +290,42 @@ def lines(png):
     d=open('/tmp/t.pgm','rb').read(); w,h=map(int,d.split(b'\n',2)[1].split())
     px=d[-w*h:]; rows=[sum(px[y*w:(y+1)*w])//w for y in range(h)]
     return [y*4 for y in range(2,398) if rows[y]>170 and rows[y]-rows[y-1]>60]
-for nm in ('v_43','v_169','v_video','v_scan'):
+for nm in ('v_first','v_second','v_video','v_scan'):
     print(nm, lines('%s.png'%nm) or 'none')
 PY
 ```
 
-Pass: `[200, 1396]` for 16:9 and VIDEO, `none` for 4:3 and SCAN. Restore afterwards: SCAN →
-PHOTO, ratio back to 4:3, collapse the bar.
+Pass: `[200, 1396]` on the picture whose label read 16:9 and on `v_video`, `none` on the one whose
+label read 4:3 and on `v_scan`.
+
+Where those numbers come from: at full resolution the two lines occupy rows **200-203** and
+**1396-1399** - 4 px each, which is the 2 dp stroke - so the top line starts on the nominal boundary
+(200) and the bottom line ends on the row just inside it (1399). The detector scans a copy
+downsampled 4x, so it reports the *first* row of each line: 200 and 1396.
+
+Restore, in this order, because a mode change is what closes the panel:
+
+```sh
+adb shell input tap $(centre 'text="PHOTO"'); sleep 2; dump
+adb shell input tap $(centre 'id/proButton'); sleep 2; dump
+adb shell cat /sdcard/q.xml | tr '>' '\n' | grep aspectRatioButton | grep -o 'text="[^"]*"'
+adb shell input tap $(centre 'id/aspectRatioButton'); sleep 2   # only if that reads 16:9: back to 4:3
+adb shell input tap $(centre 'id/proButton'); sleep 2           # closes the panel
+adb shell 'settings put system accelerometer_rotation 1; settings put system user_rotation 0'
+```
 
 ## 6. Root, without a manager installed
 
+`adb root` first in this section: two of its readings use `dmesg`, and as uid 2000 that answers
+`dmesg: klogctl: Permission denied` (measured) rather than the empty result you might mistake for an
+absent message.
+
 ```sh
+adb root; adb shell 'id -u'                       # 0; if it stays 2000, the Rooted debugging
+                                       # switch is off - the top of this file says where it lives
 adb shell 'ls -l /product/bin/ksud; ls -l /product/etc/init/ksu-install.rc'
-MANAGER_PKG=com.example.manager   # the package name of the manager you installed
+MANAGER_PKG=com.example.manager   # replace this: left as a placeholder, pm path answers nothing and
+                                   # the line below passes for the wrong reason
 adb shell "ls /product/app | grep -i su; pm path $MANAGER_PKG"   # both empty in the default form
 adb shell 'dmesg | grep -c "for init executing ksud"'                      # 3 on a steady-state boot
 adb shell 'sha256sum /data/adb/ksud /product/bin/ksud | cut -c1-16 | uniq -c'   # 2  <same hash>
@@ -250,10 +334,13 @@ adb shell '/data/adb/ksud module list'                                     # you
 ```
 
 Root hiding. **These next five lines assume two things the ROM does not provide**: the
-susfs4ksu KernelSU module is installed, and a manager the kernel recognizes is installed - which
-for a manager signed with a key outside the kernel's built-in list means registering it once with
-`/data/adb/ksud kernel dynamic-manager set-apk <base.apk>`, run as root ([root.md](root.md) has the
-rule, the command and why `su` is a prerequisite rather than a formality). On a device that has the ROM only, or after a factory reset, expect `orange` and
+susfs4ksu KernelSU module is installed, and a manager the kernel recognizes is installed. The module
+goes in through the same code path the manager's install button uses: `adb push <module>.zip
+/data/local/tmp/`, then, in the root shell this section opens with,
+`adb shell /data/adb/ksud module install /data/local/tmp/<module>.zip` (measured with
+`ksu_module_susfs.zip`). A manager signed with a key outside the kernel's built-in list
+has to be registered once with `/data/adb/ksud kernel dynamic-manager set-apk <base.apk>`, run as root
+([root.md](root.md) has the rule, the command and why `su` is a prerequisite rather than a formality). On a device that has the ROM only, or after a factory reset, expect `orange` and
 no dynamic-manager line, and treat that as the precondition missing rather than as a failure.
 
 The root channel itself, worth one line before debugging anything below it - probe with the **read**
@@ -315,7 +402,10 @@ Both `dmesg` greps here and in the block above are time-sensitive: the kernel ri
 forgets, so hours into a boot they read empty while everything is working. On an aged boot,
 read `uptime` first and judge root by the seeding result and the module list.
 
-**The seeding cycle** (worth running once, because it is the shape of this delivery):
+**The seeding cycle** - worth running once, because it is the shape of this delivery, and worth
+running **last**: it removes `/data/adb/ksud` and reboots, so the boot it produces shows the module
+unmounted and `verifiedbootstate=orange`, which are the readings several rows above would call a
+failure.
 
 ```sh
 adb shell 'rm -f /data/adb/ksud'; adb reboot
@@ -381,9 +471,17 @@ adb shell 'dmesg | grep "avc.*denied"' | sed 's/.*avc:/avc:/' | sort | uniq -c
 
 On this build there are ~13 distinct denials at boot, all from vendor components and GApps
 (`getopt` on `usap_pool_primary`, and similar), and the count grows with what you ask the device to
-do, so read the set, not the number. The judgement is a *set comparison*: none of them
-should mention `ksu`, `/product/bin`, or any file this project adds. New denials for files this
-project introduces are a real finding; the existing noise is not.
+do, so read the set, not the number. The judgement is a *set comparison*, and it fits in one pipe -
+nothing in the set may name a file this project adds:
+
+```sh
+adb shell 'dmesg | grep "avc.*denied"' | grep -E "ksu|susfs|/product/bin"   # expect no output, rc 1
+```
+
+Measured 2026-11-10: empty. A hit for a path this project introduces is a real finding; the existing
+vendor noise is not. Two things add lines to that set that are nobody's bug: reading `dmesg` itself
+contributes `syslog_read` for `comm="dmesg"` (visible in the very output you are reading), and the
+probes described at the end of this section contribute a `getattr` each.
 
 Your own probes appear in this set, and it helps to know which ones do. Reading `/data/adb` or
 `/vendor/usr/idc` as the shell user adds a `getattr` denial each time (measured: `ls` on either path
@@ -479,12 +577,13 @@ hung software reboots, and no reading here shows a power-off ever hanging.
 
 | Item | Judgement | Status |
 | --- | --- | --- |
-| Reboot to boot | one measurement, **≤120 s** and no power-key hold needed. One run is the judgement, *not* best-of-three: what this guards reproduces every time, so "three runs, one pass" would read looser than the defect | measured 2026-11-10 on the cold-installed build: **36 s** (two further runs under the older ×3 wording: 37 s and 35 s) |
+| Reboot to boot | one measurement, **≤120 s** and no power-key hold needed. One run is the judgement, *not* best-of-three: what this guards reproduces every time, so "three runs, one pass" would read looser than the defect | measured 2026-11-10 on the cold-installed build: **36 s** (two further runs, taken while this row still asked for three: 37 s and 35 s) |
 | Drain: 60 min off, 60 min with the screen off | ≤1% and ≤2% respectively, and no growth in `suspend_stats`' `failed_resume*` | waived by the owner's judgement (2026-11-04). The reason given then was that power-off had been shown to cut power cleanly, so the two hour-long windows added nothing - note that this waiver rests on a 2026-11-04 reading, not on anything measured here |
 | Bluetooth controller | pairs, and reconnects after a reconnect of the link; when it fails, the evidence route is the HCI log (developer options -> Bluetooth HCI snoop) | measured by the owner's own test on an earlier build (2026-11-04), once on a fresh `/data` (a true first pairing) and once as a reconnect |
 
-The reboot measurement is two commands and takes under a minute, so it is worth re-running on any build
-that changes `boot`:
+**Of these three rows, the reboot one is the only row that asks you to run anything**; the other two
+carry readings from earlier builds and say so in their own cells. The reboot measurement is two
+commands and takes under a minute, so it is worth re-running on any build that changes `boot`:
 
 ```sh
 t0=$(date +%s); adb reboot; adb wait-for-device
@@ -504,7 +603,7 @@ echo "$(( $(date +%s) - t0 ))s"           # expected <= 120, and no power key to
 | `Network suggestion history: {Empty}`, `systemClockConfidence()=0` with no default route | precondition unmet, do not judge |
 | framecheck exit 3 with a small tilt | correct verdict for a flat pose: pipeline OK, side/sign untested |
 | framecheck or attestcheck exit 1, no lines from the app | the app never ran to completion: not installed, or the screen was asleep and the activity was paused before it registered anything. The scripts wake and unlock the device, so check the install first |
-| `user_rotation` not matching the app's direction | the system synchronizes it while an app forces a direction |
+| `user_rotation` not matching what the screen shows | an app's own forced direction moves the display under that setting; the setting has been read both synchronized and unchanged, so read `mDisplayRotation` instead |
 | `dmesg | grep -c …` for the three stages returns 0 hours after boot | the kernel ring buffer has wrapped; judge by the seeding result |
 | `orange` and no dynamic-manager line on a ROM-only device | the susfs4ksu module is not installed; and a manager that matched one of the kernel's own keys adds no dynamic-manager line at all - judge it by the crowning line |
 

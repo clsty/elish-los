@@ -8,7 +8,7 @@ over the stock LineageOS build for this device. Four of them change how the devi
 | --- | --- | --- |
 | **Natural landscape** | The panel is mounted physically portrait, but this is a tablet you hold landscape: display install orientation, touch and pen coordinates, and every sensor's device frame are unified so that "facing the screen, charger on the right" is direction zero - in the boot animation, the lock screen, auto-rotate, touch, and the camera. | [docs/orientation.md](docs/orientation.md) |
 | **Root in the ROM itself** | KernelSU (ReSukiSU fork) plus SuSFS compiled into the device kernel, with the userspace half delivered by the image. No separate boot image to flash, no magisk zip to sideload. | [docs/root.md](docs/root.md) |
-| **Root hiding that survives** | `verifiedbootstate=green` on both channels, SuSFS mount hiding, KernelSU's dynamic manager - verified without any root-management app installed. The kernel carries the mechanism; a KernelSU module carries the policy (docs/root.md says which is which). | [docs/root.md](docs/root.md) |
+| **Root hiding that survives** | SuSFS mount hiding and KernelSU's dynamic manager, plus `verifiedbootstate=green` on the property channel out of the box and on the kernel command line once one module setting is turned on - all of it verified without any root-management app installed. The kernel carries the mechanism; a KernelSU module carries the policy (docs/root.md says which is which). | [docs/root.md](docs/root.md) |
 | **Camera app usable on a landscape tablet** | The stock camera app letterboxes itself and puts its controls across the preview on a natural-landscape screen. It gets a right-hand sidebar and a per-app landscape lock. | [docs/camera.md](docs/camera.md) |
 
 The fifth is a small network fix: Chinese NTP and captive-portal addresses that no longer depend
@@ -75,7 +75,7 @@ Read these three lines before installing:
 - Install by **sideloading from recovery**, with GApps in the same session
   ([`docs/flash.md`][flash]). Route A has been walked end to end from stock on 2026-11-10 - one pass,
   31 firmware commands, no failures - and that document carries the measured timings along with the
-  two lines of the firmware package's own list that need checking before you run them.
+  one line of the firmware package's own list that has to match the slot you actually wrote.
 - Root is in the kernel, but **no manager APK is preinstalled**, and which manager you install is a
   real choice. The upstream APK is recognised by a key the kernel carries: measured on a cold-installed
   device, it was crowned at `signature_index=0` with nothing to register. A manager built with your own

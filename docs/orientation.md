@@ -191,5 +191,5 @@ EXIF orientation from CamX metadata and does not read the framework's `SENSOR_OR
 value, which is why "preview says 0" and "EXIF was off by 90" were both true at the same time
 without contradicting each other. The blob is closed and its mapping table would have to be
 patched in six four-byte instructions across two functions (the thumbnail path has its own copy) - a change
-that measurably drags the pixel pipeline along with it. That route is documented and
-deliberately not taken.
+that measurably drags the pixel pipeline along with it. That route is deliberately not taken,
+and this document is as far as the analysis goes.

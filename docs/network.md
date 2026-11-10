@@ -23,6 +23,11 @@ silently, which is why the readers were checked in source first:
 | `config_ntpServers` | `frameworks/base/.../android/util/NtpTrustedTime.java`, reading `com.android.internal.R.array.config_ntpServers` | `android` → `FrameworkResOverlayElish` |
 | `config_captive_portal_http_url` / `_https_url` | the Connectivity module's own resources | `com.android.networkstack` → `NetworkStackOverlayMIUI` |
 
+The two names in the last column are the source directory and the installed package, and the
+criteria below grep the installed names: `FrameworkResOverlayElish` installs as
+`android.framework_res.overlay.elish`, `NetworkStackOverlayMIUI` as
+`com.android.networkstack.overlay.miui` (both read from the overlay's own manifest).
+
 One detail in `patches/apply-cn-network-changes.sh` is worth knowing before changing it: the
 overlay `NetworkStackOverlayMIUI` had **no** `values/config.xml` at all, only the localized
 one. The script creates the file (carrying over the license header from the old file) instead

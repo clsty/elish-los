@@ -71,7 +71,10 @@ user's data backup.
   behind it and is paused before it registers a listener, so the log holds `BEGIN`, a few
   `PROBE` lines and `END`, never a `SNAP`, and `check.py` exits 1. Measured both ways on one
   pose: exit 1 without unlocking, exit 0 with it. `check.py` now sends `KEYCODE_WAKEUP` and
-  `wm dismiss-keyguard` itself, which is not the same thing - waking does not unlock.
+  `wm dismiss-keyguard` itself, which is not the same thing - waking does not unlock. That is
+  enough on the device these readings come from, which has **no lock credential**; with a PIN or
+  password set, `dismiss-keyguard` does not clear it, so expect this exit 1 and unlock by hand.
+  That case has not been measured here.
 
 ## Four host-side traps, all already worked around in `../mkapk.sh`
 

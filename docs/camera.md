@@ -79,7 +79,7 @@ criteria are below.
 **Geometry** - lock the rotation by hand, cold-start the app, and read the actual bounds:
 
 ```sh
-adb shell 'settings put system accelerometer_rotation 0; settings put system user_rotation 3'
+adb shell 'settings put system accelerometer_rotation 0; settings put system user_rotation 0'
 adb shell am force-stop org.lineageos.aperture
 adb shell input keyevent KEYCODE_WAKEUP; adb shell wm dismiss-keyguard
 adb logcat -c
@@ -93,10 +93,14 @@ Expected on this tablet: `mDisplayRotation=ROTATION_0`; `viewFinder` bounds
 `[0,0][2133,1600]`; the mode-selector/controls sidebar starting at `x=2133`; and **zero** "Ignoring
 manifest-declared fixed orientation" lines - a nonzero count means the request was discarded
 again, whatever the window looks like. Restore afterwards (`accelerometer_rotation 1`,
-`user_rotation 0`).
+`user_rotation 0`). `user_rotation` maps straight onto the display rotation while auto-rotate is
+off (measured 2026-11-10: `0`/`1`/`2`/`3` gave `ROTATION_0`/`90`/`180`/`270`), so locking to `0`
+holds the tablet in the same direction the app would choose and no reading can land mid-transition.
 
-Two readings that look like judgements and are not: `user_rotation` is synchronized by the
-system while an app forces a direction, so it is not evidence either way; and `wm
+Two readings that look like judgements and are not. The `user_rotation` **setting** is not one of
+them: after writing `3` the desktop sat at `ROTATION_270` while the camera came up at `ROTATION_0`,
+the setting still reading `3` - the app's own direction moves the display under it, so
+`mDisplayRotation` is the reading. And `wm
 set-ignore-orientation-request` takes its **boolean as the first argument** and the display as
 `-d 0`, while `… reset` leaves the value at `false` rather than unset - an experiment with it
 must set `true` explicitly afterwards, or the device is left in a modified state nobody
@@ -124,7 +128,10 @@ Expected: for 16:9 and VIDEO, lines at `y=200` and `y=1396` inside the crop; for
 nothing.
 
 Where those two numbers come from: a 16:9 save area on a 2133-wide panel is 1200 px tall and
-centred, so 200 and 1400 are the nominal boundaries, and a 2 dp line reads one pixel inside them.
+centred, so 200 and 1400 are the nominal boundaries. At full resolution the lines occupy rows
+200-203 and 1396-1399 - 4 px each, the 2 dp stroke - so the upper line starts on its boundary and the
+lower one ends on the row just inside its boundary; the detector reads a copy downsampled 4x and
+therefore names the first row of each line, 200 and 1396.
 The HAL's own 1.757 aspect family sits about 7 px away from the nominal 16:9; the mask follows the
 nominal ratio because CameraX does not publish the save-area getter.
 
