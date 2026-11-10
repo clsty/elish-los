@@ -95,19 +95,14 @@ person to walk it should expect to report what differs.
        -e '/^fastboot /!d' -e '/getvar/d' -e '/^fastboot reboot$/d' \
        -e 's/_ab\b/_'"$slot"'/g' "$d/flash_all.sh" \
      | grep -vE "flash (crclist|sparsecrclist|rescue|imagefv_$slot) |erase imagefv_$slot" \
-     > sta.sh
-   sh sta.sh 2>&1 | tee sta.log
-   grep -iE "FAILED|not found|error|missmatch" sta.log          # anything here needs the next line
+     > sta.list
    ```
 
-   Then re-run only the lines that failed. Resending a partition that already succeeded is
-   harmless (rule 3), which is what makes this loop safe to leave running:
-
-   ```sh
-   grep -B1 "FAILED (remote)" sta.log | grep '^fastboot flash' | sed 's/^fastboot flash //' \
-     | sort -u > retry.txt          # check this list before trusting it
-   while read -r p f; do fastboot flash "$p" "$f" || echo "again: $p"; done < retry.txt
-   ```
+   **Read that list before running it, then run it one line at a time.** It is a list of commands, not
+   a script to hand to `sh`: a wrapper swallows the per-partition output, and that output is the only
+   diagnosis a failed flash gives. Paste one line, read what it printed, then paste the next. When a
+   line fails, re-send just that line - resending a partition that already succeeded is harmless
+   (rule 3), which is what makes the retry safe however often it turns out to be needed.
 
    A `not found` for `gpt_backup$slot` on a device that has never re-partitioned is not a
    failure: that partition does not exist yet, and this very run creates it.
