@@ -14,7 +14,7 @@ judgement script that closes that gap.
 | --- | --- |
 | `FrameCheck.java` | subscribes to 10 orientation-related sensor types, performs **no coordinate transformation**, and logs the received values verbatim as one `SNAP\|…` line every 400 ms |
 | `AndroidManifest.xml` | one activity, no permissions, no network, no resources |
-| `build.sh` | builds and signs the APK using only the toolchain already in the AOSP tree (`prebuilts/sdk/tools/linux/lib/{d8,apksigner}.jar`, `prebuilts/jdk/jdk21`, `prebuilts/sdk/current/public/android.jar`), so no SDK is needed on the host |
+| `build.sh` | a two-line call into `../mkapk.sh`, the recipe shared with the other verification apps: it builds and signs the APK using only the toolchain already in the AOSP tree, so no SDK is needed on the host |
 | `check.py` | starts the app, collects logcat, stops the app, computes the angle between `R(Q)^T * (0,0,|g|)` and the measured gravity on the host, and reports a verdict |
 
 ```sh
@@ -67,8 +67,13 @@ user's data backup.
   vendor gravity.
 - The main log buffer here is only 256 KiB and the `onCreate` lines are usually already
   gone. The judgement depends on the SNAP lines only, not on those.
+- **A dozing device looks like a broken app.** With the keyguard up, the activity starts
+  behind it and is paused before it registers a listener, so the log holds `BEGIN`, a few
+  `PROBE` lines and `END`, never a `SNAP`, and `check.py` exits 1. Measured both ways on one
+  pose: exit 1 without unlocking, exit 0 with it. `check.py` now sends `KEYCODE_WAKEUP` and
+  `wm dismiss-keyguard` itself, which is not the same thing - waking does not unlock.
 
-## Three host-side traps, all already worked around in `build.sh`
+## Four host-side traps, all already worked around in `../mkapk.sh`
 
 1. The `d8` and `apksigner` wrapper scripts in `prebuilts` are `#!/bin/bash` and resolve
    their jar through `/bin/ls`, and on NixOS there is neither `/bin/bash` nor `/bin/ls` -
@@ -79,6 +84,12 @@ user's data backup.
 3. `aapt2 compile` does not take `AndroidManifest.xml` (compile takes resources only), so
    the manifest goes straight to `aapt2 link`.
 
-`build/debug.keystore` is a throwaway debug key the script generates (RSA 2048, password
-hard-coded in `build.sh`). It represents no identity and belongs in no repository; the
-whole `build/` directory is output and can be deleted at any time.
+A fourth, in `mkapk.sh` rather than in the toolchain: a method reference or a lambda needs
+`java.lang.invoke.LambdaMetafactory`, which the public `android.jar` does not carry, so
+`javac` fails with "cannot find symbol metafactory". Use an explicit anonymous class.
+`attestcheck` hit this; nothing in `FrameCheck.java` uses one.
+
+`.signing/debug.keystore` is a throwaway debug key the recipe generates (RSA 2048, password
+hard-coded in `mkapk.sh`). It represents no identity and belongs in no repository, but it is
+*kept* rather than deleted: it sits outside `build/` on purpose, because a new key per build
+makes `adb install -r` refuse the APK with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`.
